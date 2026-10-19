@@ -1,0 +1,8 @@
+{
+  "name": "opencode-codex-quota-retry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun scripts/test_codex_quota_retry.ts --all"
+  }
+}

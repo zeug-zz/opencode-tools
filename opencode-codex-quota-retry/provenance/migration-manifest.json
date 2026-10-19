@@ -1,0 +1,199 @@
+{
+  "schema": "codex-quota-retry-source-migration.v1",
+  "migration_task": "relocate-codex-quota-retry-development/1.1",
+  "captured_date": "2026-10-15",
+  "ownership": {
+    "canonical_development_root": "packages/opencode-codex-quota-retry",
+    "source_repository": "/Users/zeug/Projects/NeverEndingQuest",
+    "source_files_retained_until_task": "2.2",
+    "retry_or_cancellation_behavior_changed": false,
+    "license_terms_changed": false,
+    "dependencies_installed": false
+  },
+  "hash_semantics": {
+    "sha256_and_bytes": "Immutable original NeverEndingQuest source identity; compared only with the source path and byte-exact original_snapshot for the gated retirement proof.",
+    "destination_sha256_at_import": "Hash of the staged Sandbox destination at initial copy, before task 1.2 portability adaptations; records the import-time byte-equality proof.",
+    "sandbox_current_sha256_and_bytes": "Hash and byte length of the current portable Sandbox destination after task 1.2; may intentionally differ from the original source for the test harness and package README.",
+    "retirement_rule": "Retirement validates original sha256 against the live NEQ source and original_snapshot only. It does not require the current Sandbox destination to equal the NEQ source."
+  },
+  "authored_assets": [
+    {
+      "source": ".opencode/plugins/codex-quota-retry.ts",
+      "destination": "packages/opencode-codex-quota-retry/src/plugins/codex-quota-retry.ts",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/implementation/.opencode/plugins/codex-quota-retry.ts",
+      "bytes": 540,
+      "sha256": "86feaa78230efcf2976e87ff8b36385a8d91c8f455e8cff9be6008a61197d822",
+      "destination_sha256_at_import": "86feaa78230efcf2976e87ff8b36385a8d91c8f455e8cff9be6008a61197d822",
+      "sandbox_current_sha256": "b509c5748afd7f67bb12784e8dc09bb81eeefeb2361bc1c83cf9cd4d835a86a5",
+      "sandbox_current_bytes": 257
+    },
+    {
+      "source": ".opencode/lib/codex-quota-retry.ts",
+      "destination": "packages/opencode-codex-quota-retry/src/lib/codex-quota-retry.ts",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/implementation/.opencode/lib/codex-quota-retry.ts",
+      "bytes": 43768,
+      "sha256": "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72",
+      "destination_sha256_at_import": "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72",
+      "sandbox_current_sha256": "bf943bd8b32f58e67f30c8c4e2e41be522932df158afa0f33d88f1561061e90e",
+      "sandbox_current_bytes": 62727
+    },
+    {
+      "source": "scripts/test_codex_quota_retry.ts",
+      "destination": "packages/opencode-codex-quota-retry/scripts/test_codex_quota_retry.ts",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/implementation/scripts/test_codex_quota_retry.ts",
+      "bytes": 255959,
+      "sha256": "a50aa9300fb3208440daa6c83226cf6311272302c131311dac5f3da5fa8e1f52",
+      "destination_sha256_at_import": "a50aa9300fb3208440daa6c83226cf6311272302c131311dac5f3da5fa8e1f52",
+      "sandbox_current_sha256": "eef0f04bcc4abf02c050aa7778f1bfd4942957b7b298c5940f980295f8fc8c4c",
+      "sandbox_current_bytes": 264504
+    },
+    {
+      "source": "docs/operations/codex-quota-retry.md",
+      "destination": "packages/opencode-codex-quota-retry/README.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/implementation/docs/operations/codex-quota-retry.md",
+      "bytes": 17612,
+      "sha256": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
+      "destination_sha256_at_import": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
+      "sandbox_current_sha256": "8e159940ae8bd8dbc79a460b40a6a34dfac958e6193f03a04443206aab4cd57a",
+      "sandbox_current_bytes": 26981
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
+      "bytes": 40,
+      "sha256": "cd54fe01555559ffd5cf6f7f1d1b06209492e5ba9147cdc3800201c09e2291d0",
+      "destination_sha256_at_import": "cd54fe01555559ffd5cf6f7f1d1b06209492e5ba9147cdc3800201c09e2291d0",
+      "sandbox_current_sha256": "cd54fe01555559ffd5cf6f7f1d1b06209492e5ba9147cdc3800201c09e2291d0",
+      "sandbox_current_bytes": 40
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/proposal.md",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/proposal.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/proposal.md",
+      "bytes": 5179,
+      "sha256": "432aaa647986ee7d865dd5a06a5158ca4a1bca7184996f1e828f716bcbf0472c",
+      "destination_sha256_at_import": "432aaa647986ee7d865dd5a06a5158ca4a1bca7184996f1e828f716bcbf0472c",
+      "sandbox_current_sha256": "e8f52ec8068f086b04631ef03b7195e1e52aa9caf161f237e1a6dff1c29af77e",
+      "sandbox_current_bytes": 7014
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/design.md",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/design.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/design.md",
+      "bytes": 12899,
+      "sha256": "459f29eb99b1d7cd45176a6e47a5287ded53926f0555a0ff6b1d73aa1c6aad8a",
+      "destination_sha256_at_import": "459f29eb99b1d7cd45176a6e47a5287ded53926f0555a0ff6b1d73aa1c6aad8a",
+      "sandbox_current_sha256": "521f483554226e1be0d1cafc1477256bf36bc17261e2312ae4fd301996af74c0",
+      "sandbox_current_bytes": 17716
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/tasks.md",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/tasks.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/tasks.md",
+      "bytes": 9556,
+      "sha256": "0c7e9016b4c953baa7d3dc7ae7d36e36c37534b518b6b5363ad442dedcd18d54",
+      "destination_sha256_at_import": "0c7e9016b4c953baa7d3dc7ae7d36e36c37534b518b6b5363ad442dedcd18d54",
+      "sandbox_current_sha256": "ea6cd472ae2b50997440e916a686661015b11df97fee8c643d91151132dc85a7",
+      "sandbox_current_bytes": 13222
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
+      "bytes": 12400,
+      "sha256": "530c69ec9300405b2db1c93de9a586f557d41cad1a13d0fe5149d2fe1af125ea",
+      "destination_sha256_at_import": "530c69ec9300405b2db1c93de9a586f557d41cad1a13d0fe5149d2fe1af125ea",
+      "sandbox_current_sha256": "7258d48c4309b6a362a4eca0d078a9d38ed660c4e48893818c80cb7deedd1f6d",
+      "sandbox_current_bytes": 16274
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
+      "bytes": 5845,
+      "sha256": "f6c5a326e90f696f34a6e12ce4a4b4943bd06e3e700b7bcd56be0478fbc01957",
+      "destination_sha256_at_import": "f6c5a326e90f696f34a6e12ce4a4b4943bd06e3e700b7bcd56be0478fbc01957",
+      "sandbox_current_sha256": "f6c5a326e90f696f34a6e12ce4a4b4943bd06e3e700b7bcd56be0478fbc01957",
+      "sandbox_current_bytes": 5845
+    },
+    {
+      "source": "openspec/changes/codex-subscription-native-retry-adapter/reports/native-verification.md",
+      "destination": "openspec/changes/codex-subscription-native-retry-adapter/reports/native-verification.md",
+      "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/reports/native-verification.md",
+      "bytes": 9960,
+      "sha256": "de3f0a4fe8d448a338aa24d8b62af511d6a169a99a61f87b384a54f243782e70",
+      "destination_sha256_at_import": "de3f0a4fe8d448a338aa24d8b62af511d6a169a99a61f87b384a54f243782e70",
+      "sandbox_current_sha256": "de3f0a4fe8d448a338aa24d8b62af511d6a169a99a61f87b384a54f243782e70",
+      "sandbox_current_bytes": 9960
+    }
+  ],
+  "license_provenance": {
+    "source": "LICENSE",
+    "destination": "packages/opencode-codex-quota-retry/provenance/LICENSE.from-neverendingquest.txt",
+    "bytes": 1499,
+    "sha256": "00d72d776afb416051bcc1a10ff2f0999f8ec2e960c739451f489a9e6dee6f21",
+    "attribution": "NeverEndingQuest source LICENSE copied verbatim; original attribution and terms preserved"
+  },
+  "evidence_tree": {
+    "operation": "single same-filesystem atomic directory rename; no file copy, archive, pruning, symlink following, or rewrite",
+    "source_absolute_path": "/Users/zeug/Projects/NeverEndingQuest/tmp/codex-quota-retry",
+    "destination_relative_path": "tmp/codex-quota-retry/imported-neq-20261015",
+    "source_path_after_move": "absent",
+    "source_root_identity_before": {
+      "device": 16777232,
+      "inode": 273686723
+    },
+    "destination_root_identity_after": {
+      "device": 16777232,
+      "inode": 273686723
+    },
+    "identity_preserved": true,
+    "regular_files": 821578,
+    "directories": 102647,
+    "symlinks": 1274,
+    "other_entries": 0,
+    "logical_bytes": 16698254068,
+    "symlink_relative_path_and_target_digest_sha256": "1bba3f0548e4e65b84616f691bffd90215c746c076d5a5fc7ecdf2ee4af5c989",
+    "counts_and_logical_bytes_match_before_after": true,
+    "key_proof_sha256": {
+      "primary-identity-20261014-2/identity/identity-contract.json": "42892c5e32bf3cb5f32ed34aeb58bff35b6c8a79223a092e03c2ec7d9c385446",
+      "primary-guard-final-20261015-5/verdict.json": "25ca291b4f2e33ab38b81289fc7e99710a3057db79cf2f428eaa4c0ce85ea64b"
+    },
+    "sourceNodeIDs": {
+      "recorded_filesystem_source_node": "device 16777232, inode 273686723",
+      "json_sourceNodeIDs_fields_in_key_proofs": [],
+      "note": "The two key-proof JSON files contain no sourceNodeIDs field; native identifiers and historical references within the proof files remain byte-identical."
+    },
+    "historical_path_mapping": {
+      "relative_mapping": "Every prior relative path R now exists at tmp/codex-quota-retry/imported-neq-20261015/R; the whole directory tree was renamed without changing its entries.",
+      "absolute_source_references": "Preserved in-place in historical evidence; not rewritten."
+    }
+  },
+  "neq_worktree_preflight": {
+    "declared_historical_85_file_baseline_sha256": "68347cbcc9f8037b74ecabf06931988374bfd7f123bfe6692fc85d5d3e59bf7a",
+    "current_status_snapshot": "tmp/codex-quota-retry/neq-preflight-status.json",
+    "current_status_entry_count": 91,
+    "current_status_entries_canonical_sha256": "f54c0e3c1077f75e19f6bc5cc4f4b4972648e0eadbce53e54da5433731e00116",
+    "current_snapshot_file_sha256": "3f57b02f16488ff9d949acf2ee6e1bc949a121996e34574ab5bbbde869b95873",
+    "post_rename_status_snapshot": "tmp/codex-quota-retry/neq-post-rename-status.json",
+    "post_rename_status_entry_count": 90,
+    "post_rename_status_entries_canonical_sha256": "c268654769ba948b2553f69b534b4891d8953bcbad47a78445c369f151c88c68",
+    "post_rename_snapshot_file_sha256": "8fc025d11b79ad25adcae173b8b0352fce3b2673fa3f132a43f7fad12f56d7b2",
+    "historical_baseline_reconstruction": "Not inferred from the digest alone; the attached preflight records exact current per-file status, size, and content hashes.",
+    "observed_external_delta": {
+      "path": "plans/v2-migration.md",
+      "preflight_state": "untracked regular file, 25805 bytes, sha256 4fb9388d1d72601f68a8b1e3d5bb03f6b6ce14bfe98539ddf688543147dba41b",
+      "post_rename_state": "absent from worktree and status",
+      "cause": "Concurrent external worktree change is inferred; the cause is unknown and was not investigated by modifying or restoring the file.",
+      "action": "Reported only; no reset, restore, or source retirement performed."
+    },
+    "unrelated_goal_work": "The 91-entry preflight and 90-entry post-rename state are recorded with per-file status, size, and hashes. No unrelated path was changed by this migration."
+  },
+  "reported_live_trial": {
+    "source": "User report; not independently re-run as part of task 1.1",
+    "duration": "four hours",
+    "post_reset_resumption_seconds": 60,
+    "separate_from_sandbox_native_gate": true
+  }
+}
