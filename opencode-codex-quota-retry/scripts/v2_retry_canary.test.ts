@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assistantTranscript, buildSessionInterruptRequest, fixturePluginSource, verifyInstalledClientContract } from "./v2_retry_canary.ts";
+import { assistantMessageDigests, assistantTranscript, auditPersistedInterruptedSession, buildSessionInterruptRequest, expectedScenarios, fixturePluginSource, hasFiniteNativeRetrySourceContract, hasNativeQuotaRetryOverride, parseCanaryMode, verifyInstalledClientContract, verifyInstalledNativeRetryPolicy } from "./v2_retry_canary.ts";
 import { buildSyntheticResponsesSSE } from "./v2_canary_composition.ts";
 
 const SOURCE = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "v2_retry_canary.ts"), "utf8");
@@ -64,6 +65,42 @@ async function testInstalledClientPreflightExecutesWithoutStartingServer(): Prom
   assert.ok(contract.typeSource.length > 0);
 }
 
+test("installed native retry source keeps the hook inside its finite scheduling policy", async () => {
+  const policy = await verifyInstalledNativeRetryPolicy();
+  assert.equal(policy.binaryVersion, "opencode v2.0.32");
+  assert.match(policy.policyDigest, /^[0-9a-f]{64}$/);
+  assert.equal(policy.sourceOnly, true, "source policy is not live native exhaustion evidence");
+  const evidence = [{ label: "native.retry-policy.source-contract", ...policy,
+    evidence: "installed-source contract only; does not establish live retry exhaustion" }];
+  assert.equal(hasFiniteNativeRetrySourceContract(evidence, policy.binaryVersion), true,
+    "verdict consumes the actual full installed-version evidence record");
+  assert.equal(hasFiniteNativeRetrySourceContract(evidence, "2.0.32"), false);
+});
+
+test("persisted interrupted-session audit uses installed SessionInfo outcome and time.idle", () => {
+  const sessionID = "ses_synthetic_fixture";
+  const sessionInfo = { id: sessionID, outcome: "interrupted", time: { created: 1, updated: 2, idle: 3 } };
+  const noSuccessTranscript = { data: [{ type: "assistant", id: "msg_fixture", content: [] }] };
+  assert.deepEqual(auditPersistedInterruptedSession(sessionInfo, sessionID, noSuccessTranscript), {
+    sessionFound: true, outcome: "interrupted", timeIdle: 3, persistedInterruptedIdle: true, noAssistantSuccess: true,
+  });
+  assert.equal(auditPersistedInterruptedSession({ id: sessionID, status: { type: "idle" } }, sessionID, noSuccessTranscript).persistedInterruptedIdle, false,
+    "V1 status shapes cannot stand in for persisted V2 SessionInfo outcome/time");
+  assert.equal(auditPersistedInterruptedSession(sessionInfo, sessionID, { data: [
+    { type: "assistant", content: [{ type: "text", text: "synthetic canary success" }] },
+  ] }).noAssistantSuccess, false);
+});
+
+test("short retry-hook decision observer proves quota summary false-to-true with bounded delay", () => {
+  const sessionDigest = "sha256:fixture";
+  const entries = [
+    { label: "native.retry-hook.before-product-decision", eventSessionDigest: sessionDigest, errorSummary: "provider.quota", decisionRetry: false },
+    { label: "native.retry-hook.after-product-decision", eventSessionDigest: sessionDigest, errorSummary: "provider.quota", decisionRetry: true, decisionDelayMs: 65_120 },
+  ];
+  assert.equal(hasNativeQuotaRetryOverride(entries, sessionDigest, 65_000), true);
+  assert.equal(hasNativeQuotaRetryOverride(entries, sessionDigest, 65_000, 100), false);
+});
+
 function testGeneratedFixturePluginTranspiles(): void {
   const generated = fixturePluginSource();
   new Bun.Transpiler({ loader: "ts" }).transformSync(generated);
@@ -74,6 +111,12 @@ function testGeneratedFixturePluginTranspiles(): void {
   assert.match(generated, /initializeV2CanaryModule/);
   assert.match(generated, /installTransportInterposer/);
   assert.match(generated, /composeV2CanaryFixture/);
+  assert.match(generated, /correlation\.retryProofs\.get\(sessionID\)/);
+  assert.match(generated, /native\.retry-hook\.before-product-decision/);
+  assert.match(generated, /native\.retry-hook\.after-product-decision/);
+  assert.match(generated, /http\.request\.signal-abort/);
+  assert.match(generated, /cooldownRemainingMs/);
+  assert.doesNotMatch(generated, /write\([^\n]*(?:rawToken|tokenValue|correlationToken:\s*token)/i);
   const interposerDefinition = generated.indexOf("function installTransportInterposer()");
   assert.ok(interposerDefinition >= 0);
   const moduleInit = generated.indexOf("const moduleComposition = await initializeV2CanaryModule");
@@ -102,7 +145,9 @@ function testIsolationEvidenceAndBounds(): void {
   assert.match(SOURCE, /const LIMIT_MS = 180_000/);
   assert.match(SOURCE, /const MAX_PROVIDER_REQUESTS = 12/);
   assert.match(SOURCE, /resetMs: 5_000, helperGraceMs: 60_000, targetNativeDelayMs: 65_000/);
-  assert.match(SOURCE, /Date\.now\(\) \+ 5_000/);
+  assert.match(SOURCE, /const RESET_SECONDS = \$\{resetSeconds\}/);
+  assert.match(SOURCE, /resets_in_seconds: RESET_SECONDS/);
+  assert.match(SOURCE, /The usage limit has been reached/);
   assert.match(SOURCE, /"retry-after-ms": "5000"/);
   assert.match(SOURCE, /const serverUsername = "opencode"/);
   assert.doesNotMatch(SOURCE, /OPENCODE_SERVER_USERNAME/);
@@ -135,7 +180,62 @@ function testIsolationEvidenceAndBounds(): void {
   assert.doesNotMatch(SOURCE, /observeCodexQuotaRetryV2Event\s*\(/);
   assert.match(SOURCE, /providerCallsAtInterruption/);
   assert.match(SOURCE, /SIGKILL-owned-child-after-SIGTERM-timeout/);
+  assert.match(SOURCE, /native\.retry-hook\.before-product-decision/);
+  assert.match(SOURCE, /native\.retry-hook\.after-product-decision/);
+  assert.match(SOURCE, /observerOnly: true/);
+  assert.match(SOURCE, /correlation\.retryProofs\.get\(sessionID\)/);
+  assert.match(SOURCE, /correlation\.activeBySession\.get\(sessionID\)/);
+  assert.match(SOURCE, /correlation\.ambiguousSessions\.has\(sessionID\)/);
+  assert.match(SOURCE, /correlation\.leases\.size/);
+  assert.match(SOURCE, /correlation\.tokens\.size/);
+  assert.match(SOURCE, /correlation\.consumedTokens\.size/);
+  assert.match(SOURCE, /proofSignalAborted/);
+  assert.match(SOURCE, /cooldownRemainingMs/);
+  assert.match(SOURCE, /http\.request\.signal-abort/);
+  assert.match(SOURCE, /reasonName/);
+  assert.match(SOURCE, /correlation\.state\.http-request\.after-product/);
+  assert.doesNotMatch(SOURCE, /tokenValue|rawToken|correlationToken:\s*token/);
+  assert.match(SOURCE, /Long reset native schedule tolerance is 3 seconds/);
+  assert.match(SOURCE, /long_reset_native_quota_hook_override_missing/);
+  assert.match(SOURCE, /Long reset native schedule/);
 }
+
+test("short and long reset modes validate before setup and declare exact bounded scenarios", () => {
+  assert.deepEqual(parseCanaryMode([]), { kind: "short" });
+  assert.deepEqual(parseCanaryMode(["--long-reset=18000"]), { kind: "long", resetSeconds: 18_000 });
+  assert.deepEqual(parseCanaryMode(["--long-reset=5460"]), { kind: "long", resetSeconds: 5_460 });
+  assert.throws(() => parseCanaryMode(["--long-reset=18001"]), /18000_or_5460/);
+  assert.throws(() => parseCanaryMode(["--long-reset=18000", "--long-reset=5460"]), /invalid_canary_arguments/);
+  assert.throws(() => parseCanaryMode(["--unknown"]), /invalid_canary_arguments/);
+  assert.throws(() => parseCanaryMode(["unexpected-positional"]), /invalid_canary_arguments/);
+  for (const [seconds, expectedDelay] of [[18_000, 18_060_000], [5_460, 5_520_000]] as const) {
+    const expected = expectedScenarios({ kind: "long", resetSeconds: seconds });
+    assert.equal(expected.mode, `long-reset-${seconds}`);
+    assert.equal(expected.limits.maxProviderCalls, 12);
+    assert.equal(expected.limits.maxDurationMs, 180_000);
+    assert.equal(expected.scenarios.length, 1);
+    assert.equal(expected.scenarios[0]!.expectedDelayMs, expectedDelay);
+    assert.equal(expected.scenarios[0]!.toleranceMs, 3_000);
+    assert.match(expected.isolation, /not OS-level isolation/);
+  }
+  assert.equal(expectedScenarios({ kind: "short" }).scenarios.length, 5, "short root/child/sibling matrix remains intact");
+  const fiveHourFixture = fixturePluginSource({ kind: "long", resetSeconds: 18_000 });
+  const ninetyOneMinuteFixture = fixturePluginSource({ kind: "long", resetSeconds: 5_460 });
+  const shortFixture = fixturePluginSource();
+  for (const fixture of [fiveHourFixture, ninetyOneMinuteFixture, shortFixture]) {
+    new Bun.Transpiler({ loader: "ts" }).transformSync(fixture);
+    assert.match(fixture, /error: \{ type: "usage_limit_reached", message: "The usage limit has been reached", plan_type: "plus", resets_in_seconds: RESET_SECONDS \}/);
+    assert.match(fixture, /observerOnly: true/);
+  }
+  assert.match(fiveHourFixture, /const RESET_SECONDS = 18000/);
+  assert.match(fiveHourFixture, /const quotaResponseCondition = \(count\) => count === 1;/);
+  assert.doesNotMatch(fiveHourFixture, /count === 3/);
+  assert.match(ninetyOneMinuteFixture, /const RESET_SECONDS = 5460/);
+  assert.match(ninetyOneMinuteFixture, /const quotaResponseCondition = \(count\) => count === 1;/);
+  assert.match(shortFixture, /const RESET_SECONDS = 5/);
+  assert.match(shortFixture, /count === 1 \|\| count === 3/);
+  assert.match(SOURCE, /Long reset native schedule tolerance is 3 seconds/);
+});
 
 function testV2InterruptEndpointAndQueryBodyContract(): void {
   const request = buildSessionInterruptRequest("ses_fixture-child");
@@ -204,4 +304,14 @@ test("transcript assertion accepts only exact assistant text and retains a safe 
   ] });
   assert.equal(success.messageCount, 1);
   assert.deepEqual(success.textParts, ["synthetic canary success"]);
+});
+
+test("same-operation evidence digests assistant IDs from persisted V2 transcript shapes", () => {
+  assert.deepEqual(assistantMessageDigests({ data: [
+    { type: "user", id: "msg_user" },
+    { type: "assistant", id: "msg_assistant" },
+  ] }), ["sha256:" + createHash("sha256").update("msg_assistant").digest("hex")]);
+  assert.deepEqual(assistantMessageDigests({ data: [
+    { info: { type: "assistant", id: "msg_nested" }, parts: [] },
+  ] }), ["sha256:" + createHash("sha256").update("msg_nested").digest("hex")]);
 });

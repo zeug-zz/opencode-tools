@@ -18,8 +18,8 @@ the Sandbox repository. Its source files are:
 
 The original NeverEndingQuest source and completed OpenSpec history are
 preserved as migration provenance under `provenance/` and
-`openspec/changes/codex-subscription-native-retry-adapter/`. Historical report
-paths and claims remain unchanged; they are not evidence of the fresh
+`openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/`.
+Historical report claims remain unchanged; they are not evidence of the fresh
 Sandbox-native acceptance gate.
 
 ### Provenance hashes and intentional portable copies
@@ -58,6 +58,12 @@ preserved pre-deployment global snapshots, not the current user-global V2 files.
 
 Verify the retirement guard's fixture suite with
 `bun test ./scripts/neq_codex_quota_retry_retirement.test.ts`.
+The combined V2/retirement regression gate from this package directory is:
+
+```text
+bun test ./scripts/v2_retry_canary.test.ts ./scripts/v2_native_retry_adapter.test.ts ./scripts/v2_early_entrypoint.test.ts ./scripts/neq_codex_quota_retry_retirement.test.ts
+bun scripts/test_codex_quota_retry.ts --all
+```
 
 The primary Sandbox-native acceptance gate recorded `PASS` at
 `tmp/codex-quota-retry/sandbox-native-20261015-1/verdict.json`; task 2.1 is
@@ -308,7 +314,7 @@ restart.
 Task 5.4 deployment backups are local to the repository under
 `tmp/codex-quota-retry/v2-deploy-<run-id>/backups/`. Preserve the backups and
 deployment report at
-`openspec/changes/codex-subscription-native-retry-adapter/reports/v2-deployment.md`;
+`openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/reports/v2-deployment.md`;
 they do not alter source provenance or immutable snapshots. The fresh private
 V2 loader verification is complete; activation in an existing live process
 remains an explicit operator reload/restart action.
@@ -489,4 +495,19 @@ not a PASS. Do not use the synthetic fixture outside this isolated canary.
 
 ### V2 compatibility correction (2026-10-19)
 
-The existing OpenSpec change now records a V2-only implementation and acceptance addendum; completed V1 gate evidence remains immutable historical evidence, and V1 runtime is retired. The two installed V2 canaries confirmed native retry/interruption event shapes and that `http.request` exposes the authoritative session ID, while child and root outgoing `x-session-id` values both carried the root ID. Fetch reconstructs URL, headers, and signal, so WeakMap identity is not a valid correlation mechanism. The planned repair uses a unique random private token in a bounded expiring process-local map, temporarily carried in an adapter-owned header and stripped before the provider delegate; no extra wire header, native-header overwrite, raw token persistence, or payload/timing heuristic is allowed. Native scheduling and the shared cooldown remain separate and authoritative. See `openspec/changes/codex-subscription-native-retry-adapter/` for the unchecked V2 implementation, gate, audit, and deployment tasks; do not treat either exploratory canary as acceptance PASS.
+The archived OpenSpec change records a V2-only implementation and acceptance addendum; completed V1 gate evidence remains immutable historical evidence, and V1 runtime is retired. The two installed V2 canaries confirmed native retry/interruption event shapes and that `http.request` exposes the authoritative session ID, while child and root outgoing `x-session-id` values both carried the root ID. Fetch reconstructs URL, headers, and signal, so WeakMap identity is not a valid correlation mechanism. The repair uses a unique random private token in a bounded expiring process-local map, temporarily carried in an adapter-owned header and stripped before the provider delegate; no extra wire header, native-header overwrite, raw token persistence, or payload/timing heuristic is allowed. Native scheduling and the shared cooldown remain separate and authoritative. See `openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/` for the completed implementation, gates, audit, and deployment record; do not treat either exploratory canary as acceptance PASS.
+
+### V2 native retry-hook precision verification (2026-10-20)
+
+The primary completed the native precision gate using bounded fixture-composed OpenCode `2.0.32` runs; details and redacted run references are in `openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/reports/v2-precision-verification.md`. The evidence covers the structured quota classifier with real/variant/missing messages, exact matching `provider.quota` and `provider.rate-limit` hook evidence, a short real-body same-operation resume, 91-minute and five-hour-plus-grace native scheduled delays followed by interruption, and proof survival when the completed transport attempt's signal is disposed before the hook. In-flight fetch/clone abort still invalidates its proof lease; native session interruption still cancels the completed proof. No exact-message eligibility restriction, response rewrite, polling, or adapter-owned retry was introduced.
+
+Long resets are intentionally handled by the native retry scheduler: the adapter does not hold or rewrite the response body, wait in `fetch`, or poll every 15 minutes. A deployment or activation in another process remains a separate operator authorization; manual copies require the documented controlled reload/restart, which can cancel live work. This evidence does not claim a five-hour wall-clock wait, provider exhaustion, OS-level network isolation, or fresh global-loader proof.
+
+After operator restart, the primary confirmed byte identity between the installed
+helper and canonical helper (SHA-256
+`27fd25d3a5504f3943acf3538a42f41279413e3c887300e0b992e03988939be6`) and an
+active `codex-quota-retry` plugin in OpenCode `2.0.32` PID `13164` via
+`GET /api/plugin`, loaded from `~/.config/opencode/plugins/codex-quota-retry.ts`.
+This is disk identity and active-plugin inventory, not a live-provider quota
+test; native behavior evidence remains scoped to the three bounded fixtures.
+No restart or deployment is performed by this documentation update.

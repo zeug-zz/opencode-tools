@@ -176,15 +176,39 @@ interface FetchRegistryRecord {
 
 interface V2CorrelationRecord {
   tokens: Map<string, { sessionID: string; expiresAt: number }>;
+  consumedTokens: Map<string, { sessionID: string; expiresAt: number }>;
   scheduled: Map<string, { expiresMonotonicMs: number; attempt: number; assistantMessageID: string }>;
   seenRetries: Map<string, number>;
+  retryProofs: Map<string, V2RetryProof>;
+  leases: Map<number, V2RequestLease>;
+  activeBySession: Map<string, Set<number>>;
+  ambiguousSessions: Set<string>;
+  nextRequestID: number;
+}
+
+interface V2RequestLease {
+  id: number;
+  sessionID: string;
+  expiresMonotonicMs: number;
+  qualified: boolean;
+  invalid: boolean;
+  finalized: boolean;
+  signal?: AbortSignal;
+  abortListener?: () => void;
+}
+
+interface V2RetryProof {
+  requestID: number;
+  expiresMonotonicMs: number;
 }
 
 function v2State(): V2CorrelationRecord {
   const global = globalThis as Record<PropertyKey, unknown>;
   let state = global[V2_CORRELATION_SYMBOL] as V2CorrelationRecord | undefined;
-  if (!state || !(state.tokens instanceof Map) || !(state.scheduled instanceof Map) || !(state.seenRetries instanceof Map)) {
-    state = { tokens: new Map(), scheduled: new Map(), seenRetries: new Map() };
+  if (!state || !(state.tokens instanceof Map) || !(state.scheduled instanceof Map) || !(state.seenRetries instanceof Map)
+    || !(state.consumedTokens instanceof Map) || !(state.retryProofs instanceof Map) || !(state.leases instanceof Map) || !(state.activeBySession instanceof Map)
+    || !(state.ambiguousSessions instanceof Set)) {
+    state = { tokens: new Map(), consumedTokens: new Map(), scheduled: new Map(), seenRetries: new Map(), retryProofs: new Map(), leases: new Map(), activeBySession: new Map(), ambiguousSessions: new Set(), nextRequestID: 1 };
     Object.defineProperty(global, V2_CORRELATION_SYMBOL, { configurable: true, enumerable: false, value: state, writable: true });
   }
   return state;
@@ -192,10 +216,86 @@ function v2State(): V2CorrelationRecord {
 
 function cleanupV2State(state = v2State(), wallNow = Date.now(), monotonicNow = typeof performance !== "undefined" ? performance.now() : Date.now()): void {
   for (const [token, item] of state.tokens) if (item.expiresAt <= wallNow) state.tokens.delete(token);
+  for (const [token, item] of state.consumedTokens) if (item.expiresAt <= wallNow) state.consumedTokens.delete(token);
   for (const [sessionID, item] of state.scheduled) if (item.expiresMonotonicMs <= monotonicNow) state.scheduled.delete(sessionID);
   const markers = (globalThis as Record<PropertyKey, unknown>)[V2_CANCELLATION_SYMBOL] as Map<string, number> | undefined;
   if (markers) for (const [sessionID, expiresAt] of markers) if (expiresAt <= monotonicNow) markers.delete(sessionID);
   for (const [key, expiresAt] of state.seenRetries) if (expiresAt <= monotonicNow) state.seenRetries.delete(key);
+  for (const [sessionID, proof] of state.retryProofs) if (proof.expiresMonotonicMs <= monotonicNow) removeV2Proof(state, sessionID);
+  for (const lease of [...state.leases.values()]) if (lease.expiresMonotonicMs <= monotonicNow) {
+    lease.invalid = true;
+    finalizeV2Lease(lease, monotonicNow);
+  }
+}
+
+function removeV2Proof(state: V2CorrelationRecord, sessionID: string): void {
+  const proof = state.retryProofs.get(sessionID);
+  if (!proof) return;
+  state.retryProofs.delete(sessionID);
+}
+
+function invalidateV2Session(state: V2CorrelationRecord, sessionID: string): void {
+  removeV2Proof(state, sessionID);
+  const active = state.activeBySession.get(sessionID);
+  if (active?.size) {
+    state.ambiguousSessions.add(sessionID);
+    for (const id of active) {
+      const lease = state.leases.get(id);
+      if (lease) lease.invalid = true;
+    }
+  }
+}
+
+function beginV2PrimaryRequest(sessionID: string, signal?: AbortSignal, options: CodexQuotaRetryFetchOptions = {}): V2RequestLease | undefined {
+  const state = v2State();
+  removeV2Proof(state, sessionID);
+  const existing = state.activeBySession.get(sessionID);
+  if (existing?.size) {
+    state.ambiguousSessions.add(sessionID);
+    for (const id of existing) {
+      const lease = state.leases.get(id);
+      if (lease) lease.invalid = true;
+    }
+  }
+  if (state.leases.size + state.retryProofs.size >= CODEX_MAX_PENDING_QUOTA_RETRIES) return undefined;
+  const id = state.nextRequestID++;
+  const now = resolveMonotonicMs(options) ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
+  const lease: V2RequestLease = { id, sessionID, expiresMonotonicMs: now + CODEX_V2_CORRELATION_TTL_MS,
+    qualified: false, invalid: signal?.aborted === true, finalized: false, signal };
+  let active = state.activeBySession.get(sessionID);
+  if (!active) state.activeBySession.set(sessionID, active = new Set());
+  if (active.size > 0) state.ambiguousSessions.add(sessionID);
+  active.add(id);
+  state.leases.set(id, lease);
+  if (signal) {
+    lease.abortListener = () => invalidateV2Session(state, sessionID);
+    signal.addEventListener("abort", lease.abortListener, { once: true });
+  }
+  return lease;
+}
+
+function finalizeV2Lease(lease: V2RequestLease, now = typeof performance !== "undefined" ? performance.now() : Date.now()): void {
+  const state = v2State();
+  if (lease.finalized) return;
+  lease.finalized = true;
+  state.leases.delete(lease.id);
+  lease.signal?.removeEventListener("abort", lease.abortListener!);
+  const active = state.activeBySession.get(lease.sessionID);
+  active?.delete(lease.id);
+  if (active?.size === 0) {
+    state.activeBySession.delete(lease.sessionID);
+    if (lease.qualified && !lease.invalid && !state.ambiguousSessions.has(lease.sessionID) && now < lease.expiresMonotonicMs
+      && state.retryProofs.size < CODEX_MAX_PENDING_QUOTA_RETRIES) {
+      // The native V2 request signal is per-attempt and may be aborted as soon
+      // as the completed response is handed to the scheduler. The lease owns
+      // abort observation only while request/body adaptation is in flight.
+      const proof: V2RetryProof = { requestID: lease.id, expiresMonotonicMs: Math.min(lease.expiresMonotonicMs, now + CODEX_V2_CORRELATION_TTL_MS) };
+      if (!lease.invalid) state.retryProofs.set(lease.sessionID, proof);
+    }
+    state.ambiguousSessions.delete(lease.sessionID);
+  }
+  lease.signal = undefined;
+  lease.abortListener = undefined;
 }
 
 function v2CancellationMarkers(): Map<string, number> {
@@ -237,8 +337,18 @@ export function consumeCodexV2CorrelationToken(
   cleanupV2State(state, now, monotonicNow);
   if (typeof token !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) return undefined;
   const item = state.tokens.get(token);
+  if (!item || item.expiresAt <= now) return undefined;
   state.tokens.delete(token);
-  return item && item.expiresAt > now ? item.sessionID : undefined;
+  state.consumedTokens.set(token, item);
+  while (state.consumedTokens.size > CODEX_MAX_PENDING_QUOTA_RETRIES) state.consumedTokens.delete(state.consumedTokens.keys().next().value!);
+  return item.sessionID;
+}
+
+function invalidateReusedV2CorrelationToken(token: unknown, now: number, monotonicNow: number): void {
+  const state = v2State();
+  cleanupV2State(state, now, monotonicNow);
+  const item = typeof token === "string" ? state.consumedTokens.get(token) : undefined;
+  if (item && item.expiresAt > now) invalidateV2Session(state, item.sessionID);
 }
 
 /** Normalize V2 retry/interruption data without changing the native scheduler. */
@@ -274,6 +384,7 @@ export function observeCodexQuotaRetryV2Event(
     return true;
   }
   if (record.type === "session.execution.interrupted") {
+    invalidateV2Session(state, data.sessionID);
     const retry = state.scheduled.get(data.sessionID);
     if (!retry || retry.expiresMonotonicMs <= monotonicNow || !["user", "shutdown", "superseded", "inactivity"].includes(String(data.reason))) return false;
     state.scheduled.delete(data.sessionID);
@@ -288,8 +399,20 @@ export function observeCodexQuotaRetryV2Event(
 export function clearCodexV2CorrelationState(): void {
   const state = v2State();
   state.tokens.clear();
+  state.consumedTokens.clear();
   state.scheduled.clear();
   state.seenRetries.clear();
+  for (const proofSession of state.retryProofs.keys()) removeV2Proof(state, proofSession);
+  for (const lease of state.leases.values()) {
+    lease.invalid = true;
+    lease.finalized = true;
+    lease.signal?.removeEventListener("abort", lease.abortListener!);
+    lease.signal = undefined;
+    lease.abortListener = undefined;
+  }
+  state.leases.clear();
+  state.activeBySession.clear();
+  state.ambiguousSessions.clear();
   v2CancellationMarkers().clear();
 }
 
@@ -312,6 +435,13 @@ export function correlateCodexQuotaRetryV2HttpRequest(event: unknown, options: C
   const requestEvent = event as { sessionID?: unknown; kind?: unknown; request?: Request };
   if (requestEvent.kind !== "primary" || typeof requestEvent.sessionID !== "string"
     || !requestEvent.request || !isCodexGenerationRequest(requestEvent.request)) return false;
+  const state = v2State();
+  const wallNow = readClock(options.nowMs, Date.now) ?? Date.now();
+  const monoNow = resolveMonotonicMs(options) ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
+  cleanupV2State(state, wallNow, monoNow);
+  // This native hook is authoritative for this session, even if issuing a
+  // correlation token fails because the bounded token table is full.
+  invalidateV2Session(state, requestEvent.sessionID);
   try {
     const headers = new Headers(requestEvent.request.headers);
     headers.delete(CODEX_V2_CORRELATION_HEADER);
@@ -1295,11 +1425,46 @@ export function buildCodexNativeRetryHeaders(
   };
 }
 
+/** Consume an exact, fresh primary-request quota proof in the native retry hook. */
+export function applyCodexQuotaRetryV2Hook(event: unknown, options: CodexQuotaRetryFetchOptions = {}): boolean {
+  if (!event || typeof event !== "object") return false;
+  const retry = event as { sessionID?: unknown; error?: unknown; decision?: unknown };
+  const state = v2State();
+  if (typeof retry.sessionID !== "string" || !retry.sessionID) return false;
+  if (!retry.error || typeof retry.error !== "object" || !retry.decision || typeof retry.decision !== "object") {
+    removeV2Proof(state, retry.sessionID);
+    return false;
+  }
+  const now = resolveMonotonicMs(options);
+  cleanupV2State(state, readClock(options.nowMs, Date.now) ?? Date.now(), now ?? Date.now());
+  const error = retry.error as { type?: unknown; message?: unknown; status?: unknown };
+  // OpenCode 2.0.32's public retry summaries map QuotaExceeded to
+  // provider.quota and RateLimit to provider.rate-limit (verified in the
+  // installed binary; these are not the AI error class/tag names).
+  if ((error.type !== "provider.quota" && error.type !== "provider.rate-limit")
+    || typeof error.message !== "string" || (error.status !== undefined && error.status !== 429)) {
+    removeV2Proof(state, retry.sessionID);
+    return false;
+  }
+  const proof = state.retryProofs.get(retry.sessionID);
+  if (now === undefined || !proof) return false;
+  removeV2Proof(state, retry.sessionID);
+  if (proof.expiresMonotonicMs <= now || state.ambiguousSessions.has(retry.sessionID)
+    || state.activeBySession.has(retry.sessionID)) return false;
+  const cooldown = getActiveSharedCooldown(options);
+  if (!cooldown) return false;
+  const decision = retry.decision as { retry?: unknown; delay?: unknown };
+  decision.retry = true;
+  decision.delay = Math.max(0, Math.ceil(cooldown.remainingMs));
+  return Number.isFinite(decision.delay);
+}
+
 async function adaptCodexQuotaResponse(
   response: Response,
   options: CodexQuotaRetryFetchOptions,
   signal?: AbortSignal,
   sessionID?: string,
+  lease?: V2RequestLease,
 ): Promise<Response> {
   if (signal?.aborted) {
     return Promise.reject(getAbortReason(signal));
@@ -1369,11 +1534,13 @@ async function adaptCodexQuotaResponse(
   headers.set("retry-after-ms", nativeHeaders.retryAfterMs);
   headers.set("retry-after", nativeHeaders.retryAfter);
   if (sessionID) getSharedCancellationState(options).recordQuotaRetry(sessionID, headerDeadline.deadlineMs);
-  return new Response(body.bodyBytes, {
+  const adapted = new Response(body.bodyBytes, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+  if (lease && !lease.invalid) lease.qualified = true;
+  return adapted;
 }
 
 function buildSyntheticCooldownResponse(
@@ -1471,6 +1638,8 @@ export function installCodexQuotaRetryFetch(
           const correlationNow = resolveNowMs({ nowMs: runtimeOptions.nowMs }) ?? Date.now();
           sessionID = consumeCodexV2CorrelationToken(token, correlationNow,
             resolveMonotonicMs(runtimeOptions) ?? (typeof performance !== "undefined" ? performance.now() : Date.now()));
+          if (!sessionID) invalidateReusedV2CorrelationToken(token, correlationNow,
+            resolveMonotonicMs(runtimeOptions) ?? (typeof performance !== "undefined" ? performance.now() : Date.now()));
           if (initHasHeaders && init) {
             forwardedArgs = [args[0], { ...init, headers }, ...args.slice(2)];
           } else if (typeof Request !== "undefined" && args[0] instanceof Request) {
@@ -1493,48 +1662,61 @@ export function installCodexQuotaRetryFetch(
     const signal = getRequestSignal(args[0], args[1]);
     if (v2HeaderNormalizationFailed) return Promise.reject(new TypeError("Could not safely consume the private Codex correlation header"));
     if (signal?.aborted) {
+      if (runtimeOptions.v2Correlation && sessionID) invalidateV2Session(v2State(), sessionID);
       return Promise.reject(getAbortReason(signal));
     }
     const cancellationState = getSharedCancellationState(runtimeOptions);
-    if (runtimeOptions.v2Correlation && sessionID) {
-      const markers = v2CancellationMarkers();
-      const wallNow = resolveNowMs({ nowMs: runtimeOptions.nowMs }) ?? Date.now();
-      const monoNow = resolveMonotonicMs(runtimeOptions) ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
-      cleanupV2State(v2State(), wallNow, monoNow);
-      const markerExpiry = markers.get(sessionID);
-      if (markerExpiry !== undefined && markerExpiry > monoNow) {
-        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
-      }
-      // The first matching primary fetch after a native retry schedule means
-      // that generation is continuing; do not let a replayed interruption mark it.
-      v2State().scheduled.delete(sessionID);
-    }
-    if (cancellationState.isCancelled(sessionID)) {
-      return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
-    }
-    cancellationState.onCodexRetryFetch(sessionID);
-    const activeCooldown = getActiveSharedCooldown(runtimeOptions);
-    if (activeCooldown) {
-      // Check cancellation before constructing a synthetic response so native
-      // AbortError semantics win and do not alter the shared route state.
-      if (signal?.aborted) {
-        return Promise.reject(getAbortReason(signal));
-      }
-      const synthetic = buildSyntheticCooldownResponse(activeCooldown, runtimeOptions);
-      if (synthetic !== undefined) {
-        if (signal?.aborted) {
-          return Promise.reject(getAbortReason(signal));
+    const lease = runtimeOptions.v2Correlation && sessionID
+      ? beginV2PrimaryRequest(sessionID, signal, runtimeOptions)
+      : undefined;
+    try {
+      if (runtimeOptions.v2Correlation && sessionID) {
+        const markers = v2CancellationMarkers();
+        const wallNow = resolveNowMs({ nowMs: runtimeOptions.nowMs }) ?? Date.now();
+        const monoNow = resolveMonotonicMs(runtimeOptions) ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
+        cleanupV2State(v2State(), wallNow, monoNow);
+        const markerExpiry = markers.get(sessionID);
+        if (markerExpiry !== undefined && markerExpiry > monoNow) {
+          if (lease) lease.invalid = true;
+          return Promise.reject(new DOMException("The operation was aborted.", "AbortError"))
+            .finally(() => { if (lease) finalizeV2Lease(lease, monoNow); });
         }
-        if (sessionID) cancellationState.recordQuotaRetry(sessionID, activeCooldown.deadlineWallMs);
-        return Promise.resolve(synthetic);
+        // The first matching primary fetch after a native retry schedule means
+        // that generation is continuing; do not let a replayed interruption mark it.
+        v2State().scheduled.delete(sessionID);
       }
+      if (cancellationState.isCancelled(sessionID)) {
+        if (lease) lease.invalid = true;
+        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"))
+          .finally(() => { if (lease) finalizeV2Lease(lease, resolveMonotonicMs(runtimeOptions)); });
+      }
+      cancellationState.onCodexRetryFetch(sessionID);
+      const activeCooldown = getActiveSharedCooldown(runtimeOptions);
+      if (activeCooldown) {
+        // Check cancellation before constructing a synthetic response so native
+        // AbortError semantics win and do not alter the shared route state.
+        if (signal?.aborted) {
+          if (lease) lease.invalid = true;
+          return Promise.reject(getAbortReason(signal)).finally(() => { if (lease) finalizeV2Lease(lease); });
+        }
+        const synthetic = buildSyntheticCooldownResponse(activeCooldown, runtimeOptions);
+        if (synthetic !== undefined) {
+          if (signal?.aborted) {
+            if (lease) lease.invalid = true;
+            return Promise.reject(getAbortReason(signal)).finally(() => { if (lease) finalizeV2Lease(lease); });
+          }
+          if (sessionID) cancellationState.recordQuotaRetry(sessionID, activeCooldown.deadlineWallMs);
+          if (lease) lease.qualified = true;
+          return Promise.resolve(synthetic).finally(() => { if (lease) finalizeV2Lease(lease, resolveMonotonicMs(runtimeOptions)); });
+        }
+      }
+      const result = Reflect.apply(original, this, forwardedArgs);
+      return Promise.resolve(result).then((response: Response) => adaptCodexQuotaResponse(response, runtimeOptions, signal, sessionID, lease))
+        .finally(() => { if (lease) finalizeV2Lease(lease, resolveMonotonicMs(runtimeOptions)); });
+    } catch (error) {
+      if (lease) { lease.invalid = true; finalizeV2Lease(lease, resolveMonotonicMs(runtimeOptions)); }
+      throw error;
     }
-
-    const result = Reflect.apply(original, this, forwardedArgs);
-    if (result && typeof result.then === "function") {
-      return result.then((response: Response) => adaptCodexQuotaResponse(response, runtimeOptions, signal, sessionID));
-    }
-    return adaptCodexQuotaResponse(result, runtimeOptions, signal, sessionID);
   } as FetchImplementation;
 
   copyFetchProperties(original, wrapper);
@@ -1562,7 +1744,7 @@ type CodexQuotaRetryV2Context = {
   location?: { directory?: string; workspaceID?: string };
   options?: CodexQuotaRetryFetchOptions;
   session?: {
-    hook?: (name: "http.request", callback: (event: unknown) => void | Promise<void>) => Promise<{ dispose: () => Promise<void> }>;
+    hook?: (name: "http.request" | "retry", callback: (event: unknown) => void | Promise<void>) => Promise<{ dispose: () => Promise<void> }>;
   };
   event?: {
     subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<unknown>;
@@ -1667,7 +1849,10 @@ const CodexQuotaRetryPlugin = {
         correlateCodexQuotaRetryV2HttpRequest(event, ctx.options ?? {});
       }));
       active.registrations.push(registration);
-      active.ready = registration.then(() => undefined, async (error) => {
+      active.registrations.push(Promise.resolve().then(() => ctx.session!.hook!("retry", (event) => {
+        applyCodexQuotaRetryV2Hook(event, getV2RuntimeOptions().options);
+      })));
+      active.ready = Promise.all(active.registrations).then(() => undefined, async (error) => {
         active.refs = 0;
         await finish(active);
         throw error;

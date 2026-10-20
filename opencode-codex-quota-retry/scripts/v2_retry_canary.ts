@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { buildSyntheticResponsesSSE, composeV2CanaryFixture } from "./v2_canary_composition.ts";
@@ -18,6 +19,21 @@ const SYNTHETIC_AUTH = join(RUN_DIR, "xdg-data", "opencode", "auth.json");
 const EVIDENCE = join(EVIDENCE_DIR, "v2-canary.jsonl");
 const LIMIT_MS = 180_000;
 const MAX_PROVIDER_REQUESTS = 12;
+const LONG_NO_LATE_CALL_WINDOW_MS = 1_000;
+export type CanaryMode = { kind: "short" } | { kind: "long"; resetSeconds: 18_000 | 5_460 };
+export function parseCanaryMode(argv: string[]): CanaryMode {
+  const longArgs = argv.filter((arg) => arg.startsWith("--long-reset="));
+  const unknownArgs = argv.filter((arg) => arg.startsWith("--") && !arg.startsWith("--long-reset="));
+  const positionalArgs = argv.filter((arg) => !arg.startsWith("--"));
+  if (unknownArgs.length || positionalArgs.length || longArgs.length > 1 || argv.some((arg) => arg === "--long-reset")) {
+    throw new Error("invalid_canary_arguments");
+  }
+  if (!longArgs.length) return { kind: "short" };
+  const seconds = Number(longArgs[0]!.slice("--long-reset=".length));
+  if (seconds !== 18_000 && seconds !== 5_460) throw new Error("long_reset_must_be_18000_or_5460_seconds");
+  return { kind: "long", resetSeconds: seconds };
+}
+const CANARY_MODE = import.meta.main ? parseCanaryMode(process.argv.slice(2)) : { kind: "short" } as const;
 const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 const PRODUCT_PLUGIN = join(PACKAGE_ROOT, "src", "plugins", "codex-quota-retry-v2.ts");
 const PRODUCT_HELPER = join(PACKAGE_ROOT, "src", "lib", "codex-quota-retry.ts");
@@ -65,6 +81,57 @@ export async function verifyInstalledClientContract(): Promise<{ clientSource: s
   return { clientSource, typeSource };
 }
 
+/** Source-only inspection of the installed V2 retry decision path; never runtime exhaustion proof. */
+export async function verifyInstalledNativeRetryPolicy(): Promise<{ binaryVersion: string; policyDigest: string; sourceOnly: true }> {
+  const binaryPath = realpathSync(runCommand("which", ["opencode"]));
+  const binaryVersion = runCommand("opencode", ["--version"]);
+  if (!/^opencode v2\.0\.32$/.test(binaryVersion)) throw new Error("installed_native_retry_policy_requires_opencode_2_0_32");
+  const source = await readFile(binaryPath, "latin1");
+  const start = source.indexOf('var sO=Nt("15 minutes")');
+  const end = source.indexOf("var Ll=(e)=>Number.isFinite(e)?e:0", start);
+  if (start < 0 || end < 0) throw new Error("installed_native_retry_policy_source_not_found");
+  const excerpt = source.slice(start, end);
+  for (const [pattern, code] of [
+    [/JR\(10\)/, "finite_native_retry_schedule"],
+    [/s\.retry&&i<=cO/, "native_finite_retry_decision_guard"],
+    [/yield\*s\.hook\(v\)/, "native_hook_inside_retry_decision"],
+    [/Number\.isFinite\(v\.decision\.delay\)/, "finite_override_delay_guard"],
+    [/e\.publish\(fJ/, "native_retry_schedule_event"],
+  ] as const) {
+    if (!pattern.test(excerpt)) throw new Error(`installed_native_retry_policy_contract_mismatch:${code}`);
+  }
+  return { binaryVersion, policyDigest: sha256(excerpt), sourceOnly: true };
+}
+
+export function hasFiniteNativeRetrySourceContract(entries: JsonRecord[], installedVersion: string): boolean {
+  return entries.some((entry) => entry.label === "native.retry-policy.source-contract"
+    && entry.binaryVersion === installedVersion && installedVersion === "opencode v2.0.32" && entry.sourceOnly === true
+    && entry.evidence === "installed-source contract only; does not establish live retry exhaustion"
+    && typeof entry.policyDigest === "string" && /^[0-9a-f]{64}$/.test(entry.policyDigest));
+}
+
+export function hasNativeQuotaRetryOverride(entries: JsonRecord[], sessionDigest: unknown, expectedDelayMs: number, toleranceMs = 3_000): boolean {
+  const before = entries.find((entry) => entry.label === "native.retry-hook.before-product-decision" && entry.eventSessionDigest === sessionDigest);
+  const after = entries.find((entry) => entry.label === "native.retry-hook.after-product-decision" && entry.eventSessionDigest === sessionDigest);
+  return before?.errorSummary === "provider.quota" && before.decisionRetry === false
+    && after?.errorSummary === "provider.quota" && after.decisionRetry === true
+    && Number.isFinite(after.decisionDelayMs) && Math.abs(Number(after.decisionDelayMs) - expectedDelayMs) <= toleranceMs;
+}
+
+export function auditPersistedInterruptedSession(sessionInfo: unknown, expectedSessionID: string, transcript: unknown): {
+  sessionFound: boolean; outcome?: string; timeIdle?: number; persistedInterruptedIdle: boolean; noAssistantSuccess: boolean;
+} {
+  const info = sessionInfo && typeof sessionInfo === "object" ? sessionInfo as JsonRecord : {};
+  const time = info.time && typeof info.time === "object" ? info.time as JsonRecord : {};
+  const assistant = assistantTranscript(transcript);
+  const sessionFound = info.id === expectedSessionID;
+  const outcome = typeof info.outcome === "string" ? info.outcome : undefined;
+  const timeIdle = typeof time.idle === "number" && Number.isFinite(time.idle) ? time.idle : undefined;
+  const noAssistantSuccess = !assistant.textParts.includes("synthetic canary success");
+  return { sessionFound, outcome, timeIdle, persistedInterruptedIdle: sessionFound && outcome === "interrupted" && timeIdle !== undefined,
+    noAssistantSuccess };
+}
+
 /** Installed V2 client schema sends POST /interrupt with resume=false in the query, not a JSON body. */
 export function buildSessionInterruptRequest(sessionID: string): { endpoint: string; init: RequestInit } {
   return { endpoint: `/api/session/${encodeURIComponent(sessionID)}/interrupt?resume=false`, init: { method: "POST" } };
@@ -80,7 +147,18 @@ async function record(label: string, data: JsonRecord): Promise<void> {
   await appendFile(EVIDENCE, `${JSON.stringify({ label, observedAtMs: Math.round(performance.now() - START_MONOTONIC_MS), observedAtEpochMs: Date.now(), ...data })}\n`, { mode: 0o600 });
 }
 
-const EXPECTED_SCENARIOS = {
+export function expectedScenarios(mode: CanaryMode) {
+  if (mode.kind === "long") {
+    const expectedDelayMs = mode.resetSeconds * 1000 + 60_000;
+    return {
+      schema: "codex-quota-retry-v2-installed-scenarios.v1",
+      mode: `long-reset-${mode.resetSeconds}`,
+      isolation: "synthetic-auth; application-level outbound network deny; not OS-level isolation; no user goals; no live provider",
+      limits: { maxProviderCalls: MAX_PROVIDER_REQUESTS, maxDurationMs: LIMIT_MS },
+      scenarios: [{ id: `root-long-reset-${mode.resetSeconds}`, expected: "one root receives the real structured quota body, native retry schedules full reset plus 60s grace (no five-hour truncation), then root is interrupted; bounded observation only, no late-call claim beyond that window", resetSeconds: mode.resetSeconds, expectedDelayMs, toleranceMs: 3_000, identitySource: "native-http.request-hook + native-event.data.sessionID" }],
+    } as const;
+  }
+  return {
   schema: "codex-quota-retry-v2-installed-scenarios.v1",
   isolation: "synthetic-auth; application-level outbound network deny; no user goals; no live provider",
   limits: { maxProviderCalls: MAX_PROVIDER_REQUESTS, maxDurationMs: LIMIT_MS },
@@ -91,7 +169,8 @@ const EXPECTED_SCENARIOS = {
     { id: "controlled-exact-child-probes", expected: "two controlled late-fetch probes use fresh authoritative native-hook correlation only for the exact canceled child; distinct from native retry evidence", identitySource: "native-http.request-hook-via-exported-correlator" },
     { id: "sibling-after-cooldown", expected: "sibling under the same root succeeds after shared cooldown expiration with synthetic text persisted", identitySource: "native-http.request-hook + native-event.data.sessionID" },
   ],
-} as const;
+  } as const;
+}
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -106,11 +185,13 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-export function fixturePluginSource(): string {
+export function fixturePluginSource(mode: CanaryMode = { kind: "short" }): string {
   const evidenceFile = JSON.stringify(EVIDENCE);
   const codexURL = JSON.stringify(CODEX_URL);
   const moduleProbeURL = JSON.stringify("https://v2-canary.invalid/internal-early-wrapper-probe");
   const maxRequests = MAX_PROVIDER_REQUESTS;
+  const resetSeconds = mode.kind === "long" ? mode.resetSeconds : 5;
+  const quotaResponseCondition = mode.kind === "long" ? "count === 1" : "count === 1 || count === 3";
   return `
 import { appendFile } from "node:fs/promises";
 import http from "node:http";
@@ -125,6 +206,8 @@ const OUT = ${evidenceFile};
 const ROUTE = ${codexURL};
 const MODULE_PROBE = ${moduleProbeURL};
 const LIMIT = ${maxRequests};
+const RESET_SECONDS = ${resetSeconds};
+const quotaResponseCondition = (count) => ${quotaResponseCondition};
 const SAFE = new Set(${JSON.stringify([...SAFE_HEADERS])});
 const stateKey = Symbol.for("codex-quota-retry.v2-canary");
 const state = globalThis[stateKey] ?? { count: 0, blocked: 0, pendingGuardWrites: [],
@@ -133,6 +216,100 @@ globalThis[stateKey] = state;
 const digest = (value) => "sha256:" + createHash("sha256").update(value).digest("hex");
 const startedAt = performance.now();
 const write = async (label, data) => appendFile(OUT, JSON.stringify({ label, observedAtMs: Math.round(performance.now() - startedAt), observedAtEpochMs: Date.now(), ...data }) + "\\n", { mode: 0o600 });
+const retryStateSnapshot = (sessionID) => {
+  const correlation = globalThis[Symbol.for("opencode.codex-quota-retry.v2-correlation")];
+  const proof = correlation?.retryProofs instanceof Map ? correlation.retryProofs.get(sessionID) : undefined;
+  const active = correlation?.activeBySession instanceof Map ? correlation.activeBySession.get(sessionID) : undefined;
+  const cooldown = globalThis[Symbol.for("opencode.codex-quota-retry.route-cooldown")];
+  const now = performance.now();
+  return {
+    proofExists: proof !== undefined,
+    activeRequestCount: active instanceof Set ? active.size : 0,
+    ambiguousSession: correlation?.ambiguousSessions instanceof Set ? correlation.ambiguousSessions.has(sessionID) : false,
+    outstandingLeaseCount: correlation?.leases instanceof Map ? correlation.leases.size : 0,
+    pendingTokenCount: correlation?.tokens instanceof Map ? correlation.tokens.size : 0,
+    consumedTokenCount: correlation?.consumedTokens instanceof Map ? correlation.consumedTokens.size : 0,
+    proofSignalAborted: typeof proof?.signal?.aborted === "boolean" ? proof.signal.aborted : undefined,
+    cooldownExists: cooldown !== undefined,
+    cooldownRemainingMs: Number.isFinite(cooldown?.deadlineMonotonicMs)
+      ? Math.max(0, cooldown.deadlineMonotonicMs - now) : undefined,
+  };
+};
+const writeRetryState = async (label, sessionID, extra = {}) => write(label, {
+  eventSessionDigest: typeof sessionID === "string" ? digest(sessionID) : undefined,
+  ...retryStateSnapshot(sessionID), ...extra,
+});
+// CANARY-only observation: intercept Map mutations without changing product
+// decisions, and persist no session IDs, request IDs, tokens, signals, or bodies.
+const instrumentProductRetryLifecycle = () => {
+  const correlation = globalThis[Symbol.for("opencode.codex-quota-retry.v2-correlation")];
+  if (!correlation || correlation.productRetryLifecycleInstrumented) return;
+  const note = (label, lease, remaining) => {
+    const active = typeof lease?.sessionID === "string" ? correlation.activeBySession?.get(lease.sessionID) : undefined;
+    const pending = write(label, {
+      qualified: lease?.qualified === true,
+      invalid: lease?.invalid === true,
+      finalized: lease?.finalized === true,
+      signalAborted: lease?.signal?.aborted === true,
+      ambiguousAtObservation: typeof lease?.sessionID === "string" && correlation.ambiguousSessions?.has(lease.sessionID) === true,
+      activeLeaseCountAtObservation: active instanceof Set ? active.size : undefined,
+      monotonicExpiryDeltaMs: Number.isFinite(remaining) ? Math.round(remaining * 1000) / 1000 : undefined,
+      evidenceSource: "fixture-only-observation-of-canonical-helper-lifecycle",
+    });
+    state.pendingGuardWrites.push(pending);
+  };
+  const oldLeases = correlation.leases;
+  const leases = new Map();
+  leases.set = function(key, lease) {
+    const result = Map.prototype.set.call(this, key, lease);
+    note("retry-proof-diagnostic.lease-created", lease, lease?.expiresMonotonicMs - performance.now());
+    return result;
+  };
+  leases.delete = function(key) {
+    const lease = this.get(key);
+    if (lease) note("retry-proof-diagnostic.lease-finalized", lease, lease.expiresMonotonicMs - performance.now());
+    return Map.prototype.delete.call(this, key);
+  };
+  const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size").get;
+  Object.defineProperty(leases, "size", { configurable: true, get() {
+    const size = mapSize.call(this);
+    if (size + correlation.retryProofs.size >= 64) note("retry-proof-diagnostic.lease-capacity-full", undefined);
+    return size;
+  } });
+  for (const [key, lease] of oldLeases) Map.prototype.set.call(leases, key, lease);
+  correlation.leases = leases;
+
+  const oldProofs = correlation.retryProofs;
+  const proofs = new Map();
+  proofs.set = function(sessionID, proof) {
+    const result = Map.prototype.set.call(this, sessionID, proof);
+    note("retry-proof-diagnostic.proof-created", proof, proof?.expiresMonotonicMs - performance.now());
+    return result;
+  };
+  proofs.delete = function(sessionID) {
+    const proof = this.get(sessionID);
+    if (proof) note("retry-proof-diagnostic.proof-invalidated", proof, proof.expiresMonotonicMs - performance.now());
+    return Map.prototype.delete.call(this, sessionID);
+  };
+  for (const [sessionID, proof] of oldProofs) Map.prototype.set.call(proofs, sessionID, proof);
+  correlation.retryProofs = proofs;
+  correlation.productRetryLifecycleInstrumented = true;
+};
+const observeRequestAbort = (event) => {
+  const sessionID = typeof event?.sessionID === "string" ? event.sessionID : undefined;
+  const kind = typeof event?.kind === "string" ? event.kind : undefined;
+  const signal = event?.request?.signal;
+  if (!signal || typeof signal.addEventListener !== "function") return;
+  const report = () => {
+    const reason = signal.reason;
+    const reasonName = typeof reason?.name === "string" ? reason.name : reason === undefined ? "AbortError" : "unknown";
+    void write("http.request.signal-abort", {
+      eventSessionDigest: sessionID ? digest(sessionID) : undefined, kind, reasonName,
+    });
+  };
+  if (signal.aborted) report();
+  else signal.addEventListener("abort", report, { once: true });
+};
 const noteBlocked = (mechanism, destination = "unknown") => {
   state.blocked++;
   const pending = write("network.blocked", { mechanism, destination });
@@ -170,9 +347,11 @@ const interposerFetch = async function(input, init) {
       privateCorrelationHeaderAbsent,
       allowedHeaderDigests: safeHeaderDigests(init?.headers ?? input?.headers) });
     if (!privateCorrelationHeaderAbsent) throw new Error("V2_CANARY_PRIVATE_CORRELATION_HEADER_LEAK");
-    if (state.count === 1 || state.count === 3) {
-      const retryAt = Date.now() + 5_000;
-      return new Response(JSON.stringify({ error: { type: "usage_limit_reached" }, resets_at: retryAt }), {
+    if (quotaResponseCondition(state.count)) {
+      await write("quota.fixture.response", { resetSeconds: RESET_SECONDS,
+        expectedNativeDelayMs: RESET_SECONDS * 1000 + 60_000,
+        quotaErrorType: "usage_limit_reached", quotaMessage: "The usage limit has been reached", planType: "plus" });
+      return new Response(JSON.stringify({ error: { type: "usage_limit_reached", message: "The usage limit has been reached", plan_type: "plus", resets_in_seconds: RESET_SECONDS } }), {
         status: 429, headers: { "content-type": "application/json", "retry-after-ms": "5000" },
       });
     }
@@ -274,16 +453,30 @@ export default Plugin.define({
     registrations.push(await ctx.session.hook("http.request", async (event) => {
       const sessionDigest = typeof event.sessionID === "string" ? digest(event.sessionID) : undefined;
       if (sessionDigest && !state.hookSessions.has(sessionDigest)) state.hookSessions.set(sessionDigest, state.hookSessions.size === 0 ? "root" : state.hookSessions.size === 1 ? "child" : "sibling");
+      observeRequestAbort(event);
       await write("http.request", { eventSessionDigest: sessionDigest, identitySource: "native-http.request-hook",
         sessionRole: sessionDigest ? state.hookSessions.get(sessionDigest) : undefined,
         eventKind: event.kind,
         allowedHeaderDigests: safeHeaderDigests(event.request?.headers) });
+      await writeRetryState("correlation.state.http-request.before-product", event.sessionID, { eventKind: event.kind });
     }));
     registrations.push(await ctx.session.hook("http.response", async (event) => {
       await write("http.response", { eventSessionDigest: typeof event.sessionID === "string" ? digest(event.sessionID) : undefined,
         identitySource: "native-http.response-hook", sessionRole: typeof event.sessionID === "string" ? state.hookSessions.get(digest(event.sessionID)) : undefined,
         eventKind: event.kind,
         status: event.response?.status });
+      await writeRetryState("correlation.state.http-response", event.sessionID, { eventKind: event.kind, status: event.response?.status });
+    }));
+    // Observe the native retry input/output without changing it. This listener
+    // is registered before the canonical product's retry decision hook.
+    registrations.push(await ctx.session.hook("retry", async (event) => {
+      const value = event && typeof event === "object" ? event : {};
+      const decision = value.decision && typeof value.decision === "object" ? value.decision : {};
+      await writeRetryState("native.retry-hook.before-product-decision", value.sessionID, {
+        errorSummary: value.error && typeof value.error === "object" ? value.error.type : undefined,
+        decisionRetry: decision.retry, decisionDelayMs: decision.delay,
+        observerOnly: true,
+      });
     }));
     const eventSubscription = (async () => {
       try {
@@ -293,6 +486,8 @@ export default Plugin.define({
             eventSessionDigest: typeof data.sessionID === "string" ? digest(data.sessionID) : undefined,
             identitySource: "native-event.data.sessionID",
             sessionRole: typeof data.sessionID === "string" ? state.hookSessions.get(digest(data.sessionID)) : undefined,
+            attempt: typeof data.attempt === "number" ? data.attempt : undefined,
+            assistantMessageDigest: typeof data.assistantMessageID === "string" ? digest(data.assistantMessageID) : undefined,
             at: typeof data.at === "number" || typeof data.at === "string" ? data.at : undefined,
           });
           else if (event.type === "session.execution.interrupted") {
@@ -366,7 +561,21 @@ export default Plugin.define({
           compatible,
         });
         if (!compatible) throw new Error("canonical_product_wrapper_registration_incompatible");
-        return productCleanup;
+        const afterRequestObserver = await ctx.session.hook("http.request", async (event) => {
+          instrumentProductRetryLifecycle();
+          await writeRetryState("correlation.state.http-request.after-product", event.sessionID, {
+            eventKind: event.kind, privateCorrelationHeaderPresent: event.request?.headers?.has?.("x-opencode-codex-quota-retry-correlation") === true,
+          });
+        });
+        const afterRetryObserver = await ctx.session.hook("retry", async (event) => {
+          const value = event && typeof event === "object" ? event : {};
+          const decision = value.decision && typeof value.decision === "object" ? value.decision : {};
+          await writeRetryState("native.retry-hook.after-product-decision", value.sessionID, {
+            errorSummary: value.error && typeof value.error === "object" ? value.error.type : undefined,
+            decisionRetry: decision.retry, decisionDelayMs: decision.delay, observerOnly: true,
+          });
+        });
+        return async () => { await afterRetryObserver.dispose(); await afterRequestObserver.dispose(); await productCleanup?.(); };
       },
     });
     return cleanup;
@@ -443,6 +652,19 @@ export function assistantTranscript(value: unknown): { messageCount: number; tex
   return { messageCount: assistants.length, textParts, errorReasons };
 }
 
+export function assistantMessageDigests(value: unknown): string[] {
+  const root = value && typeof value === "object" ? value as JsonRecord : {};
+  const list = Array.isArray(value) ? value : Array.isArray(root.data) ? root.data as unknown[] : [];
+  return list.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const message = item as JsonRecord;
+    const info = message.info && typeof message.info === "object" ? message.info as JsonRecord : undefined;
+    const isAssistant = message.type === "assistant" || info?.type === "assistant";
+    const id = typeof message.id === "string" ? message.id : typeof info?.id === "string" ? info.id : undefined;
+    return isAssistant && id ? [digest(id)] : [];
+  });
+}
+
 async function assertAssistantTranscript(role: string, sessionID: string, transcript: unknown): Promise<void> {
   const assistant = assistantTranscript(transcript);
   const persistedSyntheticText = assistant.textParts.some((text) => text === "synthetic canary success");
@@ -490,6 +712,7 @@ async function waitForServer(base: string, child: ReturnType<typeof spawn>): Pro
 async function run(): Promise<void> {
   const installedVersion = runCommand("opencode", ["--version"]);
   const installedClient = await verifyInstalledClientContract();
+  const nativeRetryPolicy = await verifyInstalledNativeRetryPolicy();
   await mkdir(join(RUN_DIR, "xdg-config", "opencode"), { recursive: true, mode: 0o700 });
   await mkdir(join(RUN_DIR, "xdg-data", "opencode"), { recursive: true, mode: 0o700 });
   await mkdir(join(RUN_DIR, "xdg-state", "opencode"), { recursive: true, mode: 0o700 });
@@ -499,16 +722,20 @@ async function run(): Promise<void> {
   await mkdir(EVIDENCE_DIR, { recursive: true, mode: 0o700 });
   const snapshotsDir = join(EVIDENCE_DIR, "source-snapshots");
   await mkdir(snapshotsDir, { recursive: true, mode: 0o700 });
-  await writeFile(join(EVIDENCE_DIR, "expected-scenarios.json"), JSON.stringify(EXPECTED_SCENARIOS, null, 2), { mode: 0o600 });
+  const expected = expectedScenarios(CANARY_MODE);
+  await writeFile(join(EVIDENCE_DIR, "expected-scenarios.json"), JSON.stringify(expected, null, 2), { mode: 0o600 });
   await record("canary.start", { runID: RUN_ID, installedVersion, timeLimitMs: LIMIT_MS,
-    maxProviderRequests: MAX_PROVIDER_REQUESTS, isolation: "application-level-network-guards; not OS-level egress isolation",
+    mode: CANARY_MODE, maxProviderRequests: MAX_PROVIDER_REQUESTS, isolation: "application-level-network-guards; not OS-level egress isolation",
     projectConfigDisabled: true, evidenceRelativePath: relative(REPO_ROOT, EVIDENCE_DIR) });
+  await record("native.retry-policy.source-contract", { binaryVersion: nativeRetryPolicy.binaryVersion,
+    policyDigest: nativeRetryPolicy.policyDigest, sourceOnly: nativeRetryPolicy.sourceOnly,
+    evidence: "installed-source contract only; does not establish live retry exhaustion" });
 
   // Deliberately write the only auth fixture before creating the isolated DB.
   await writeFile(SYNTHETIC_AUTH, JSON.stringify({ openai: {
     type: "oauth", access: "synthetic", refresh: "synthetic", expires: Date.now() + 86_400_000,
   } }, null, 2), { mode: 0o600 });
-  const fixtureSource = fixturePluginSource();
+  const fixtureSource = fixturePluginSource(CANARY_MODE);
   const canonicalEntrypoint = await readFile(PRODUCT_PLUGIN);
   const canonicalHelper = await readFile(PRODUCT_HELPER);
   const fixturePath = join(RUN_DIR, "xdg-config", "opencode", "plugins", "00-v2-fixture.ts");
@@ -562,12 +789,14 @@ async function run(): Promise<void> {
   await writeFile(join(snapshotsDir, "source-hashes.json"), JSON.stringify({
     schema: "codex-quota-retry-v2-canary-sources.v1",
     binaryVersion: installedVersion,
+    mode: CANARY_MODE,
     sources: {
       harness: sha256(scriptSource), fixturePlugin: sha256(fixtureSource),
       canonicalEarlyEntrypoint: sha256(canonicalEntrypoint.toString("utf8")), canonicalHelper: sha256(canonicalHelper.toString("utf8")),
       compositionHelper: sha256(compositionSource.toString("utf8")),
       config: sha256(configText),
       installedClientGeneratedRoutes: sha256(installedClient.clientSource), installedClientSchemas: sha256(installedClient.typeSource),
+      installedNativeRetryPolicy: nativeRetryPolicy.policyDigest,
     },
     installedClientPaths: { generatedRoutes: CLIENT_CHUNK, schemas: CLIENT_TYPES },
   }, null, 2), { mode: 0o600 });
@@ -621,6 +850,65 @@ async function run(): Promise<void> {
     if (!rootID) throw new Error("Session create response did not expose a session ID");
     await record("session.created", { role: "root", sessionDigest: digest(rootID) });
     const promptPath = `/api/session/${encodeURIComponent(rootID)}/prompt`;
+    if (CANARY_MODE.kind === "long") {
+      const promptPending = fetch(`${base}${promptPath}`, { method: "POST", signal: AbortSignal.timeout(80_000), headers: { authorization: serverAuthorization, "content-type": "application/json" },
+        body: JSON.stringify({ text: "Reply with the exact words synthetic canary success." }) });
+      const rootDigest = digest(rootID);
+      const retry = await waitForEvidence((entry) => entry.label === "session.retry.scheduled" && entry.eventSessionDigest === rootDigest, 15_000, "long_root_retry_schedule");
+      const quota = await waitForEvidence((entry) => entry.label === "quota.fixture.response", 5_000, "long_quota_fixture");
+      const retryAt = Number(retry.at);
+      const expectedDelayMs = CANARY_MODE.resetSeconds * 1000 + 60_000;
+      // Long reset native schedule tolerance is 3 seconds, including scheduler and observation overhead.
+      const observedDelayMs = retryAt - Number(quota.observedAtEpochMs);
+      const delayWithinTolerance = Number.isFinite(observedDelayMs) && Math.abs(observedDelayMs - expectedDelayMs) <= 3_000;
+      const fullDelayEvidence = {
+        role: "root", sessionDigest: rootDigest, resetSeconds: CANARY_MODE.resetSeconds,
+        expectedDelayMs, observedDelayMs, scheduledAt: retryAt, quotaResponseAt: quota.observedAtEpochMs,
+        toleranceMs: 3_000, exceedsNative15MinuteDefaultCap: observedDelayMs > 15 * 60_000,
+        attempt: retry.attempt, assistantMessageDigest: retry.assistantMessageDigest,
+        source: "native-event.session.retry.scheduled.data.at minus synthetic-quota-response timestamp",
+      };
+      await record("long-reset.native-schedule", { ...fullDelayEvidence, withinTolerance: delayWithinTolerance });
+      if (!delayWithinTolerance || retry.attempt !== 2 || typeof retry.assistantMessageDigest !== "string") {
+        throw new Error("long_reset_native_schedule_contract_failed");
+      }
+      const beforeHook = await waitForEvidence((entry) => entry.label === "native.retry-hook.before-product-decision" && entry.eventSessionDigest === rootDigest, 5_000, "long_retry_hook_before");
+      const afterHook = await waitForEvidence((entry) => entry.label === "native.retry-hook.after-product-decision" && entry.eventSessionDigest === rootDigest, 5_000, "long_retry_hook_after");
+      if (beforeHook.errorSummary !== "provider.quota" || afterHook.errorSummary !== "provider.quota"
+        || afterHook.decisionRetry !== true || Math.abs(Number(afterHook.decisionDelayMs) - expectedDelayMs) > 3_000) {
+        throw new Error("long_reset_native_quota_hook_override_missing");
+      }
+      const interruptRequest = buildSessionInterruptRequest(rootID);
+      await apiEmpty(base, interruptRequest.endpoint, interruptRequest.init);
+      const interruption = await waitForEvidence((entry) => entry.label === "session.execution.interrupted"
+        && entry.eventSessionDigest === rootDigest, 10_000, "long_root_interruption");
+      if (interruption.reason !== "user") throw new Error("long_root_native_interruption_reason_mismatch");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, LONG_NO_LATE_CALL_WINDOW_MS));
+      const entriesAfterWindow = (await readFile(EVIDENCE, "utf8")).split("\n").filter(Boolean)
+        .flatMap((line) => { try { return [JSON.parse(line) as JsonRecord]; } catch { return []; } });
+      const delegatedCalls = entriesAfterWindow.filter((entry) => entry.label === "codex.fetch").length;
+      const stateResponse = await apiJson(base, `/api/session/${encodeURIComponent(rootID)}`);
+      const transcript = await apiJson(base, `/api/session/${encodeURIComponent(rootID)}/message`);
+      const stateAudit = auditPersistedInterruptedSession(stateResponse, rootID, transcript);
+      const persistedIdle = stateAudit.persistedInterruptedIdle && interruption.reason === "user";
+      const boundedNoLateCall = delegatedCalls === 1 && interruption.providerCallsAtInterruption === 1;
+      await record("long-reset.root-state", {
+        sessionDigest: rootDigest, nativeInterrupted: true, interruptionReason: interruption.reason,
+        persistedRootFound: stateAudit.sessionFound, persistedOutcome: stateAudit.outcome, persistedTimeIdle: stateAudit.timeIdle,
+        persistedIdle, noAssistantSuccess: stateAudit.noAssistantSuccess,
+        delegatedCalls, observationWindowMs: LONG_NO_LATE_CALL_WINDOW_MS,
+        boundedNoLateCall, scope: "bounded post-interruption observation only; not a claim through the long deadline",
+        evidenceSource: "installed-session-get-response-and-message-transcript",
+      });
+      if (!persistedIdle || !stateAudit.noAssistantSuccess || !boundedNoLateCall) throw new Error("long_reset_interruption_state_assertion_failed");
+      const promptResponse = await promptPending;
+      await record("session.prompt", { role: "root", status: promptResponse.status });
+      if (!promptResponse.ok) throw new Error(`Root prompt returned HTTP ${promptResponse.status}`);
+      await promptResponse.arrayBuffer();
+      await record("long-reset.completed", { role: "root", sessionDigest: rootDigest, providerCalls: delegatedCalls,
+        expectedDelayMs, observedDelayMs, nativeAttempt: retry.attempt, quotaSummary: afterHook.errorSummary,
+        interrupted: true, persistedIdle, noAssistantSuccess: stateAudit.noAssistantSuccess, boundedNoLateCall: true });
+    } else {
     const prompt = await fetch(`${base}${promptPath}`, { method: "POST", signal: AbortSignal.timeout(80_000), headers: { authorization: serverAuthorization, "content-type": "application/json" },
       body: JSON.stringify({ text: "Reply with the exact words synthetic canary success." }) });
     await record("session.prompt", { role: "root", status: prompt.status });
@@ -629,6 +917,12 @@ async function run(): Promise<void> {
     await apiEmpty(base, `/api/experimental/session/${encodeURIComponent(rootID)}/wait`);
     const rootTranscript = await apiJson(base, `/api/session/${encodeURIComponent(rootID)}/message`);
     await assertAssistantTranscript("root", rootID, rootTranscript);
+    const rootRetry = await waitForEvidence((entry) => entry.label === "session.retry.scheduled" && entry.eventSessionDigest === digest(rootID), 5_000, "short_root_retry_identity");
+    const rootMessageIDs = assistantMessageDigests(rootTranscript);
+    const sameAssistantMessage = typeof rootRetry.assistantMessageDigest === "string" && rootMessageIDs.includes(rootRetry.assistantMessageDigest);
+    await record("root.same-assistant-message-across-retry", { sessionDigest: digest(rootID), scheduledAssistantMessageDigest: rootRetry.assistantMessageDigest,
+      persistedAssistantMessageDigests: rootMessageIDs, sameAssistantMessage, evidenceSource: "native-retry-event-plus-persisted-transcript" });
+    if (!sameAssistantMessage) throw new Error("short_root_assistant_message_identity_changed_across_retry");
 
     const child = await apiJson(base, "/api/session", { method: "POST", body: JSON.stringify({
       title: "Synthetic V2 quota retry child", parentID: rootID, location,
@@ -692,6 +986,7 @@ async function run(): Promise<void> {
     await assertAssistantTranscript("sibling", siblingID, siblingTranscript);
     await record("scenario.completed", { rootSessionDigest: digest(rootID), childSessionDigest: childDigest,
       siblingSessionDigest: digest(siblingID), providerCalls: providerCallsBeforeSibling + 1 });
+    }
   } catch (error) {
     const reason = safeFailureReason(error);
     const failureClass = isAssertionOrLeakFailure(error) ? "FAIL" : "BLOCKED";
@@ -737,12 +1032,55 @@ async function run(): Promise<void> {
     const probes = entries.filter((entry) => entry.label === "controlled-late-fetch-probe");
     const networkSummaries = entries.filter((entry) => entry.label === "fixture.network-guard.summary");
     const network = networkSummaries.at(-1);
-    const scenarioCompleted = entries.find((entry) => entry.label === "scenario.completed");
+    const scenarioCompleted = entries.find((entry) => entry.label === "scenario.completed" || entry.label === "long-reset.completed");
     const networkBlockedEvents = entries.filter((entry) => entry.label === "network.blocked").length;
-    const assertions = {
+    const assertions = CANARY_MODE.kind === "long" ? {
+      realBodyQuotaObserved: entries.some((entry) => entry.label === "quota.fixture.response"
+        && entry.resetSeconds === CANARY_MODE.resetSeconds && entry.quotaErrorType === "usage_limit_reached"
+        && entry.quotaMessage === "The usage limit has been reached" && entry.planType === "plus"),
+      nativeFullResetSchedule: entries.some((entry) => entry.label === "long-reset.native-schedule"
+        && entry.withinTolerance === true && Number(entry.observedDelayMs) > 15 * 60_000
+        && Math.abs(Number(entry.observedDelayMs) - (CANARY_MODE.resetSeconds * 1000 + 60_000)) <= 3_000),
+      nativeAttemptTwo: entries.some((entry) => entry.label === "long-reset.native-schedule" && entry.attempt === 2),
+      nativeQuotaSummaryOverride: hasNativeQuotaRetryOverride(entries, rootDigest, CANARY_MODE.resetSeconds * 1000 + 60_000),
+      nativeRootInterruption: entries.some((entry) => entry.label === "session.execution.interrupted" && entry.eventSessionDigest === rootDigest && entry.reason === "user"),
+      persistedRootInterruptedIdle: entries.some((entry) => entry.label === "long-reset.root-state" && entry.persistedRootFound === true
+        && entry.persistedOutcome === "interrupted" && typeof entry.persistedTimeIdle === "number" && entry.persistedIdle === true),
+      noAssistantSuccess: entries.some((entry) => entry.label === "long-reset.root-state" && entry.noAssistantSuccess === true),
+      boundedNoLateProviderCall: entries.some((entry) => entry.label === "long-reset.root-state" && entry.boundedNoLateCall === true
+        && entry.observationWindowMs === LONG_NO_LATE_CALL_WINDOW_MS && entry.scope === "bounded post-interruption observation only; not a claim through the long deadline"),
+      oneDelegatedProviderCall: providerRequestCount === 1 && entries.filter((entry) => entry.label === "codex.fetch").length === 1,
+      noSyntheticProbeOrRetryLoop: probes.length === 0 && entries.every((entry) => !String(entry.label).includes("probe")),
+      providerCallBound: providerRequestCount === 1 && providerRequestCount <= MAX_PROVIDER_REQUESTS && network?.budgetHit === false,
+      privateCorrelationHeaderNotSent: entries.filter((entry) => entry.label === "codex.fetch").length === providerRequestCount
+        && entries.filter((entry) => entry.label === "codex.fetch").every((entry) => entry.privateCorrelationHeaderAbsent === true),
+      fixtureComposedCanonicalSetup: entries.some((entry) => entry.label === "fixture-composition.canonical-setup"
+        && entry.mode === "fixture-composed-setup-not-loader-proof" && entry.earlyEntrypointInstalledBeforeCanonicalSetup === true
+        && entry.fetchBeforeCanonicalSetupMatchesEarlyCapture === true && entry.fetchAfterCanonicalSetupMatchesEarlyCapture === true
+        && entry.fetchChangedDuringCanonicalSetup === false && entry.v2WrapperRegistrationCompatible === true && entry.compatible === true),
+      earlyModuleCaptureAndGuardedDelegate: entries.some((entry) => entry.label === "fixture-composition.module-capture"
+        && entry.guardsInstalledBeforeDynamicEarlyEntrypointImport === true && entry.fetchReplacedBeforeEarlyEntrypointImport === true
+        && entry.hostCapturePointerMatchesRegisteredV2Wrapper === true && entry.productOriginalEqualsGuardedInterposer === true
+        && entry.guardedDelegateProbe === "synthetic-non-network-non-provider" && entry.providerCallCounterContaminated === false)
+        && entries.some((entry) => entry.label === "fixture-composition.host-capture-check" && entry.hostCaptureMatchesEarlyWrapper === true),
+      canonicalSourcesByteIdentical: entries.some((entry) => entry.label === "fixture-composition.source-identity"
+        && entry.byteIdentical === true && entry.canonicalEarlyEntrypointSha256 === entry.copiedPluginSha256
+        && entry.canonicalHelperSha256 === entry.copiedHelperSha256 && entry.canonicalDirectoryAutoDiscovered === false),
+      finiteNativeRetrySourceContract: hasFiniteNativeRetrySourceContract(entries, installedVersion),
+      applicationNetworkDenied: network?.blockedAttempts === 0 && network?.externalNetworkPolicy === "application-level-deny",
+      finalGuardSummaryAfterScenario: network?.final === true && network?.summarySource === "parent-after-owned-server-exit"
+        && typeof scenarioCompleted?.observedAtEpochMs === "number" && typeof network.observedAtEpochMs === "number"
+        && network.observedAtEpochMs > scenarioCompleted.observedAtEpochMs,
+      allGuardDenialsCounted: network?.blockedAttempts === networkBlockedEvents && network?.blockedEventCount === networkBlockedEvents,
+      elapsedBound: performance.now() - START_MONOTONIC_MS <= LIMIT_MS && !timedOut,
+      ownedServerTerminated: server.exitCode !== null || server.signalCode !== null,
+    } : {
       rootDelegatedQuota: responsesFor(rootDigest).includes(429),
       rootNativeRetry: entries.some((entry) => entry.label === "session.retry.scheduled" && entry.eventSessionDigest === rootDigest),
       rootSyntheticSuccess: responsesFor(rootDigest).includes(200) && entries.some((entry) => entry.label === "transcript.assertion" && entry.role === "root" && entry.persistedSyntheticText === true),
+      rootSameAssistantMessageAcrossRetry: entries.some((entry) => entry.label === "root.same-assistant-message-across-retry"
+        && entry.sessionDigest === rootDigest && entry.sameAssistantMessage === true),
+      rootNativeQuotaSummaryOverride: hasNativeQuotaRetryOverride(entries, rootDigest, 65_000),
       childDelegatedQuota: responsesFor(childDigest).includes(429),
       childNativeInterruption: entries.some((entry) => entry.label === "session.execution.interrupted" && entry.eventSessionDigest === childDigest && entry.reason === "user")
         && entries.some((entry) => entry.label === "session.state.assertion" && entry.role === "child" && entry.sessionDigest === childDigest && entry.nativeExecutionInterrupted === true),
@@ -767,6 +1105,7 @@ async function run(): Promise<void> {
       canonicalSourcesByteIdentical: entries.some((entry) => entry.label === "fixture-composition.source-identity"
         && entry.byteIdentical === true && entry.canonicalEarlyEntrypointSha256 === entry.copiedPluginSha256
         && entry.canonicalHelperSha256 === entry.copiedHelperSha256 && entry.canonicalDirectoryAutoDiscovered === false),
+      finiteNativeRetrySourceContract: hasFiniteNativeRetrySourceContract(entries, installedVersion),
       applicationNetworkDenied: network?.blockedAttempts === 0 && network?.externalNetworkPolicy === "application-level-deny",
       finalGuardSummaryAfterScenario: network?.final === true && network?.summarySource === "parent-after-owned-server-exit"
         && typeof scenarioCompleted?.observedAtEpochMs === "number" && typeof network.observedAtEpochMs === "number"
@@ -781,7 +1120,7 @@ async function run(): Promise<void> {
       || networkBlockedEvents > 0 || performance.now() - START_MONOTONIC_MS > LIMIT_MS;
     const status = Object.values(assertions).every(Boolean) ? "PASS"
       : hardFailure || entries.some((entry) => entry.label === "scenario.started") ? "FAIL" : "BLOCKED";
-    await record("canary.end", { timedOut, serverPID: server.pid, serverExitCode: server.exitCode,
+    await record("canary.end", { mode: CANARY_MODE, timedOut, serverPID: server.pid, serverExitCode: server.exitCode,
       serverSignalCode: server.signalCode, providerRequestCount, elapsedMs: Math.round(performance.now() - START_MONOTONIC_MS),
       evidenceRelativePath: relative(REPO_ROOT, EVIDENCE_DIR) });
     const sanitize = (text: string): string => text
@@ -795,7 +1134,7 @@ async function run(): Promise<void> {
     await writeFile(join(EVIDENCE_DIR, "server.stdout.log"), sanitize(tail(stdout)), { mode: 0o600 });
     await writeFile(join(EVIDENCE_DIR, "server.stderr.log"), sanitize(tail(stderr)), { mode: 0o600 });
     await writeFile(join(EVIDENCE_DIR, "verdict.json"), JSON.stringify({ schema: "codex-quota-retry-v2-verdict.v1",
-      status, installedLiveProof: status === "PASS", installedVersion, assertions,
+      mode: CANARY_MODE, status, installedLiveProof: status === "PASS", installedVersion, assertions,
       providerRequestCount, maxProviderCalls: MAX_PROVIDER_REQUESTS, elapsedMs: Math.round(performance.now() - START_MONOTONIC_MS),
       maxDurationMs: LIMIT_MS, serverPID: server.pid, serverExitCode: server.exitCode, serverSignalCode: server.signalCode,
       evidenceRelativePath: relative(REPO_ROOT, EVIDENCE_DIR) }, null, 2), { mode: 0o600 });

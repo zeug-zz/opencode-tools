@@ -34,8 +34,8 @@
       "bytes": 43768,
       "sha256": "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72",
       "destination_sha256_at_import": "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72",
-      "sandbox_current_sha256": "bf943bd8b32f58e67f30c8c4e2e41be522932df158afa0f33d88f1561061e90e",
-      "sandbox_current_bytes": 62727
+      "sandbox_current_sha256": "27fd25d3a5504f3943acf3538a42f41279413e3c887300e0b992e03988939be6",
+      "sandbox_current_bytes": 72173
     },
     {
       "source": "scripts/test_codex_quota_retry.ts",
@@ -54,12 +54,12 @@
       "bytes": 17612,
       "sha256": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
       "destination_sha256_at_import": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
-      "sandbox_current_sha256": "8e159940ae8bd8dbc79a460b40a6a34dfac958e6193f03a04443206aab4cd57a",
-      "sandbox_current_bytes": 26981
+      "sandbox_current_sha256": "e7286689ed20194dcfb0cbae8bfdd136c6dc7de365cf2d86de11125dd8696e5c",
+      "sandbox_current_bytes": 29318
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/.openspec.yaml",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
       "bytes": 40,
       "sha256": "cd54fe01555559ffd5cf6f7f1d1b06209492e5ba9147cdc3800201c09e2291d0",
@@ -69,47 +69,47 @@
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/proposal.md",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/proposal.md",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/proposal.md",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/proposal.md",
       "bytes": 5179,
       "sha256": "432aaa647986ee7d865dd5a06a5158ca4a1bca7184996f1e828f716bcbf0472c",
       "destination_sha256_at_import": "432aaa647986ee7d865dd5a06a5158ca4a1bca7184996f1e828f716bcbf0472c",
-      "sandbox_current_sha256": "e8f52ec8068f086b04631ef03b7195e1e52aa9caf161f237e1a6dff1c29af77e",
-      "sandbox_current_bytes": 7014
+      "sandbox_current_sha256": "f87dc1ceeefe8fcb69d1d41fcdc32530110e0188b7bed748792a8847fafd6a1b",
+      "sandbox_current_bytes": 11147
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/design.md",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/design.md",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/design.md",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/design.md",
       "bytes": 12899,
       "sha256": "459f29eb99b1d7cd45176a6e47a5287ded53926f0555a0ff6b1d73aa1c6aad8a",
       "destination_sha256_at_import": "459f29eb99b1d7cd45176a6e47a5287ded53926f0555a0ff6b1d73aa1c6aad8a",
-      "sandbox_current_sha256": "521f483554226e1be0d1cafc1477256bf36bc17261e2312ae4fd301996af74c0",
-      "sandbox_current_bytes": 17716
+      "sandbox_current_sha256": "a6229b94d59b9b31359bca4ebdee92efa0ce8431df7c22b092136d76a63b360d",
+      "sandbox_current_bytes": 22550
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/tasks.md",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/tasks.md",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/tasks.md",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/tasks.md",
       "bytes": 9556,
       "sha256": "0c7e9016b4c953baa7d3dc7ae7d36e36c37534b518b6b5363ad442dedcd18d54",
       "destination_sha256_at_import": "0c7e9016b4c953baa7d3dc7ae7d36e36c37534b518b6b5363ad442dedcd18d54",
-      "sandbox_current_sha256": "ea6cd472ae2b50997440e916a686661015b11df97fee8c643d91151132dc85a7",
-      "sandbox_current_bytes": 13222
+      "sandbox_current_sha256": "27ed5fee7a6c22abe6446db5d7170e05357e533ccc8f09fab164b5db19d78ffe",
+      "sandbox_current_bytes": 18245
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/specs/codex-subscription-native-retry-adapter/spec.md",
       "bytes": 12400,
       "sha256": "530c69ec9300405b2db1c93de9a586f557d41cad1a13d0fe5149d2fe1af125ea",
       "destination_sha256_at_import": "530c69ec9300405b2db1c93de9a586f557d41cad1a13d0fe5149d2fe1af125ea",
-      "sandbox_current_sha256": "7258d48c4309b6a362a4eca0d078a9d38ed660c4e48893818c80cb7deedd1f6d",
-      "sandbox_current_bytes": 16274
+      "sandbox_current_sha256": "b3a90b18494bca674c498d6aac9e0910f2ab9ff8c58127fdbbcd5226fc634a1a",
+      "sandbox_current_bytes": 22707
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/reports/cancellation-identity.md",
       "bytes": 5845,
       "sha256": "f6c5a326e90f696f34a6e12ce4a4b4943bd06e3e700b7bcd56be0478fbc01957",
@@ -119,7 +119,7 @@
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/reports/native-verification.md",
-      "destination": "openspec/changes/codex-subscription-native-retry-adapter/reports/native-verification.md",
+      "destination": "openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/reports/native-verification.md",
       "original_snapshot": "packages/opencode-codex-quota-retry/provenance/original/openspec/changes/codex-subscription-native-retry-adapter/reports/native-verification.md",
       "bytes": 9960,
       "sha256": "de3f0a4fe8d448a338aa24d8b62af511d6a169a99a61f87b384a54f243782e70",
