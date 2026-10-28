@@ -7,6 +7,14 @@ deployment boundary. The adapter is HTTP-only and process-alive only. It does
 not provide restart recovery, a daemon, a provider fallback, model switching,
 or a manual pause/resume mechanism.
 
+On OpenCode V2 the adapter registers exactly two native hooks: `http.request` for
+correlation identity and `retry` for the native override. No `http.response`
+observer is registered. V2 retry evidence can come from the existing
+fetch-wrapper proof path, and, when that path yields no override, from the exact
+`error.response` payload carried by the native `retry` event for a positively
+classified `openai` quota `429`. The payload is read only; it is never mutated,
+and no response or header is rewritten.
+
 The canonical development package is `packages/opencode-codex-quota-retry/` in
 the Sandbox repository. Its source files are:
 
@@ -64,6 +72,14 @@ The combined V2/retirement regression gate from this package directory is:
 bun test ./scripts/v2_retry_canary.test.ts ./scripts/v2_native_retry_adapter.test.ts ./scripts/v2_early_entrypoint.test.ts ./scripts/neq_codex_quota_retry_retirement.test.ts
 bun scripts/test_codex_quota_retry.ts --all
 ```
+
+The combined V2/retirement regression gate currently reports 56/56 passing tests
+across the four files. The earlier `55 pass / 1 fail` state was the retirement
+fixture's destination-hash expectation, which now passes after the migration
+manifest was refreshed; it was not a runtime-path failure. `--all` currently
+passes 9/9 provider-free modes. Historical counts of 51/51 and 14/14 in the
+archived precision report remain historical evidence for the earlier task state
+and are not rewritten.
 
 The primary Sandbox-native acceptance gate recorded `PASS` at
 `tmp/codex-quota-retry/sandbox-native-20261015-1/verdict.json`; task 2.1 is
@@ -228,6 +244,24 @@ counter, or replace the native retry loop. OpenCode remains authoritative for
 native retry status, the next retry timestamp, timer handling, finite
 five-attempt exhaustion, and final error visibility.
 
+The V2 adapter has two evidence sources for the same bounded one-use override.
+The existing fetch-wrapper path correlates through a private adapter-owned header
+and lease and mints a one-use proof keyed by the authoritative
+`event.sessionID`. When that proof-first path produces no override, the native
+`retry` event is the second source: for provider `openai` it fires with
+`error.type=provider.quota` and carries the exact upstream HTTP `429` payload in
+`error.response.body`. The adapter reads that payload only, requires
+`openai`/`429`/`error.type=usage_limit_reached`, bounds string bodies by
+`maxErrorBodyBytes` before parsing, classifies with the existing positive
+classifier, normalizes the deadline with the same 60-second grace and bounded
+stagger, arms the shared cooldown, records the retry for `event.sessionID`, and
+sets `decision.retry`/`decision.delay` to the finite shared monotonic remainder.
+Both sources derive the same deadline and remain idempotent when they observe the
+same response. The payload path never mutates the `error` object, its
+`error.response`, the body, or headers, and adds no `retry-after`,
+`x-should-retry`, or other header; the native `retry` hook remains the only
+scheduler override.
+
 The adapter does not silently raise the native timer, retry, goal, or task
 limits. If an installed guard cannot safely retain the approved limits, block
 activation and investigate; do not patch a third-party package or bypass the
@@ -297,6 +331,16 @@ canonical helper `src/lib/codex-quota-retry.ts` is copied to
 import remains valid. Do not install the V2 entrypoint under an additional
 `codex-quota-retry-v2.ts` plugin filename and do not deploy the legacy shim
 alongside it.
+
+The deployed V2 entrypoint registers exactly two native hooks: `http.request` for
+correlation identity and `retry` for the native override. No `http.response`
+observer is registered. Deployment means replacing the two canonical copies
+(`~/.config/opencode/plugins/codex-quota-retry.ts` and
+`~/.config/opencode/lib/codex-quota-retry.ts`) and restarting the intended
+OpenCode service. Writing the installed files may trigger the plugin watcher and
+a reload, but a stale process that has not reloaded still requires an explicit
+operator restart; activation is only observable in a process started after
+deployment.
 
 The deployment changes only these two global plugin/helper files. It does not
 edit plugin configuration, select or force HTTP transport, or modify operator
@@ -511,3 +555,173 @@ active `codex-quota-retry` plugin in OpenCode `2.0.32` PID `13164` via
 This is disk identity and active-plugin inventory, not a live-provider quota
 test; native behavior evidence remains scoped to the three bounded fixtures.
 No restart or deployment is performed by this documentation update.
+
+### V2 native retry-payload proof (2026-10-20)
+
+On 2026-10-20 the globally installed V2 plugin was active and OpenCode `2.0.32`
+was serving requests, yet Codex generations failed immediately with
+`AI.Error.QuotaExceeded` and no native retry was scheduled. The recorded
+provider payload was the full upstream HTTP `429` with
+`error.type=usage_limit_reached` and a primary reset roughly 11553 seconds out.
+Plugin load was observed roughly 460 ms after service start, so the provider
+transport had already captured `fetch` before the plugin module installed its
+wrapper; the fetch-wrapper-only path had no lease to finalize and no proof to
+mint.
+
+The actual mechanism is the native `retry` event. It fires with
+`error.type=provider.quota` and carries the exact upstream `429` payload in
+`error.response.body`. When the proof-first path produces no override, the
+adapter classifies that payload directly: it requires provider `openai`, HTTP
+`429` (from `status_code`, then `error.status`, then the native `429` default),
+and `error.type=usage_limit_reached`; it bounds string bodies by
+`maxErrorBodyBytes` before parsing; then it normalizes the authoritative reset
+with `parseCodexQuotaDeadline`, applies the existing 60-second grace and bounded
+stagger, arms the shared cooldown, records the retry for `event.sessionID`, and
+sets `decision.retry`/`decision.delay` to the finite shared monotonic remainder.
+The payload is read only and never mutated. No `http.response` hook is
+registered, and the registered hooks are exactly `http.request` and `retry`.
+
+Four retained attempts from that day are FAIL evidence, not acceptance, and no
+raw session identifiers are recorded here:
+
+- **Gate A — standard deploy + watcher hot reload: FAIL.** The quota request
+  failed immediately with `provider.quota`. Confounded: the service most likely
+  re-imported the cached old `lib` module, so Gate A proves nothing about the new
+  code.
+- **Gate B — forced fresh `lib` import + provider-scoped `http.response` hook:
+  FAIL.** The quota request failed immediately and the hook never fired for the
+  `429`.
+- **Gate C — forced fresh `lib` import + unscoped `http.response` hook: FAIL.**
+  The hook fired for a `200` response but never for the `429`. The native `retry`
+  hook did fire with `error.type=provider.quota`, `attempt: 2`, and
+  `decision: {retry:false}`.
+- **Probe D — mechanism evidence, not acceptance.** A temporary entrypoint probe
+  set `decision.retry=true` and `decision.delay=(resets_in_seconds+60)*1000`.
+  The session held a scheduled retry (`10,187,000` ms) instead of failing and
+  was then interrupted. This shows the decision override is the effective lever,
+  but it is a probe, not a live gate pass.
+
+Gates B and C disprove the `http.response` approach for the Codex quota `429`;
+that hook does not fire for it. The historical precision report
+(`openspec/changes/archive/2026-10-20-codex-subscription-native-retry-adapter/reports/v2-precision-verification.md`)
+remains unchanged historical evidence for the earlier fetch-wrapper path; it is
+not rewritten or reinterpreted by this section. Current provider-free counts are
+reported in the verification section above.
+
+**Final live gate (2026-10-20, `03:24:10Z`): PASS.** Runtime code only; the
+temporary Probe D diagnostic had been removed. The native `retry` event carried
+`error.type=provider.quota` with `attempt: 2`, and the adapter set
+`decision.retry=true` with delay `9,669,095` ms (the payload reset plus the
+60-second grace and bounded stagger). The session stayed scheduled
+(`null`, not failed) and became `interrupted` after an explicit interrupt.
+Exactly one bounded Codex request was made, and no raw provider body,
+credentials, or session identifiers are recorded. Evidence is under
+`tmp/codex-quota-retry/live-20261020/`; see
+`openspec/changes/codex-native-retry-payload-proof/reports/live-gate-20261020.md`.
+The standard global files were restored after the gate, but the running process
+still holds the pre-fix cached module and requires an operator restart to load
+them. Gates A/B/C and Probe D above remain retained FAIL/mechanism evidence and
+are not rewritten by this PASS.
+
+## Claude session-limit native retry plugin
+
+`@openchamber/opencode-claude` (provider `claude-code`) returns HTTP 429 with
+`rate_limit_error` / `claude_session_limit` and a published reset (`resets_at`,
+`retry_after`) when the Claude subscription session limit is reached. OpenCode
+2.1.2 caps provider retry-after at 15 minutes and 10 attempts (about 2.5 hours),
+so this plugin uses the native `retry` hook to hold the retry until the published
+reset.
+
+Sources: `src/lib/claude-session-limit-retry.ts` (classification, deadline, cap,
+cooldown) and the V2 entrypoint `src/plugins/claude-session-limit-retry.ts`. The
+plugin is independent of the Codex sources: it imports nothing from Codex and uses
+its own global symbol, `opencode.claude-session-limit-retry.cooldown`.
+
+Behavior:
+
+- Classification (all required, shared): model `providerID` is `claude-code`; the
+  body (from `error.response.body`, a JSON string of at most 64 KiB, or an object)
+  has `error.code` `claude_session_limit`. Then one class applies:
+  - Class A (429 gate): `error.type` is `provider.rate-limit` or `provider.quota`;
+    status is 429 from `error.response.status_code`, falling back to
+    `error.status`; body `error.type` is `rate_limit_error`.
+  - Class B (mid-stream): `error.type` is `provider.internal`; status is not 429
+    (HTTP 200 SSE error chunk); body `error.type` is `error`. Intercepted only when
+    a reset time can be parsed from the message text. Otherwise native backoff
+    applies.
+- Deadline: the latest valid future candidate among body `resets_at`, header
+  `x-claude-rate-limit-reset`, body `retry_after`, header `retry-after` (headers
+  are matched case-insensitively), and reset times in the message text (body
+  `error.message` and the event-level message), plus one 60 s grace. Text forms:
+  an ISO instant; `resets H[:MM]am|pm (IANA zone)`, taken as the next occurrence
+  and DST-aware; and a dated form, `resets Mon D[, YYYY] H[:MM]am|pm (zone)`. Text
+  beats a bare `retry_after`: a 429 with `retry_after: 600` whose text names a
+  reset about 2 h away waits for that reset. Malformed, stale, invalid-zone,
+  non-finite, or unrepresentable candidates are ignored. With no valid candidate
+  the plugin does not intercept; there is no synthetic fallback.
+- Cap: a graced wait longer than `maxWaitMs` (default 6 h) is not intercepted.
+  A weekly reset is left to native policy, so the error surfaces after native
+  retries are exhausted.
+- Cooldown: a process-global monotonic deadline is shared across sessions. The
+  later deadline wins, the grace is applied once, and each delay adds a stagger
+  of 0-250 ms.
+- Read-only: only `decision.retry` and `decision.delay` are set. `error`, the
+  response, headers, and body are never mutated. There is no fetch wrapper, no
+  `http.request` or `http.response` hook, no response rewriting, no retry loop,
+  and no `session.abort`; interruption stays native.
+- Mid-stream (Class B) events are intercepted only when the message text yields a
+  reset time. This is the 2026-10-22 field failure
+  (`openspec/changes/claude-session-limit-native-retry/reports/field-failure-20261022.md`):
+  the v1 plugin skipped that event, so native backoff ran. A Class B event without a
+  parseable text reset is left to native backoff, and its next retry reaches the
+  proxy's 429 gate.
+- Only the `retry` hook is registered. Cleanup disposes it idempotently.
+
+Options:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `maxWaitMs` | 6 h (`CLAUDE_SESSION_LIMIT_MAX_WAIT_MS`) | Cap on the graced wait; positive finite, clamped to 2_147_483_647 ms |
+| `nowMs` | `Date.now` | Wall clock; test-only |
+| `monotonicMs` | monotonic clock | Cooldown clock; test-only |
+| `staggerMs` | random 0-250 ms | Per-call stagger; test-only |
+
+Verification (provider-free; run from `packages/opencode-codex-quota-retry/`):
+
+```text
+bun test ./scripts/claude_session_limit_retry.test.ts      # 70 tests
+bun scripts/claude_session_limit_stub_gate.ts --self-check
+```
+
+The isolated stub gate needs the installed OpenCode 2.1.2 and talks only to a
+localhost 429 stub. It does not contact a provider. It has three scenarios:
+
+```text
+bun scripts/claude_session_limit_stub_gate.ts                      # default: 429, resets_at 2 h out
+bun scripts/claude_session_limit_stub_gate.ts --scenario=fallback  # 429, retry_after 600, text reset ~2 h out
+bun scripts/claude_session_limit_stub_gate.ts --scenario=midstream # HTTP 200 SSE error chunk, text reset ~4 h out
+```
+
+The 2026-10-22 v2 gate passed all three on 2.1.2, with one stub chat request and
+one hook attempt each. Default set `decision.delay` to 7,260,083 ms (2 h reset,
+60 s grace, stagger), above the native 15-minute cap. Fallback set 7,296,314 ms,
+from the text reset rather than the ~11 min that `retry_after: 600` alone would
+give. Midstream set 14,489,922 ms, from the text reset. The midstream stub framing
+is modelled on field-failure fixture A; the real proxy's exact stream framing is
+unverified. On 2.1.2, `error.response` carried only `body`, with no headers and no
+`status_code`, so the deadline came from the body and text and the status from
+`error.status`. This does not prove a genuinely exhausted subscription; that live
+gate (task 3.4) is optional and separately authorized. See
+`openspec/changes/claude-session-limit-native-retry/reports/stub-gate-20261022-v2.md`
+and, for the v1 default run, `reports/stub-gate-20261022.md`.
+
+Installation: v1 is deployed (task 3.2) and was restarted (task 3.3). The v2
+redeploy (task 5.6) is pending and requires explicit authorization plus an
+OpenCode restart. The global copies are:
+
+- `~/.config/opencode/plugins/claude-session-limit-retry.ts`
+- `~/.config/opencode/lib/claude-session-limit-retry.ts`
+
+The entrypoint imports `../lib/claude-session-limit-retry.ts`, so both files are
+needed. Backups belong under `tmp/claude-session-limit-retry/deploy-<date>/`.
+Rollback is deleting those two files and restarting OpenCode.

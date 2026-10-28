@@ -58,7 +58,7 @@ function retryEvent(sessionID: string, type = "provider.quota") {
 }
 
 async function setupContext(counters: { hooks: number; disposed: number; aborted: boolean }, options: Record<string, unknown> = {}, location?: { directory: string; workspaceID?: string }, plugin = Plugin) {
-  const hookCallbacks = new Map<string, (event: unknown) => void>();
+  const hookCallbacks = new Map<string, (event: unknown) => unknown>();
   const queue: unknown[] = [];
   let waiter: ((result: IteratorResult<unknown>) => void) | undefined;
   const emit = (event: unknown) => {
@@ -101,7 +101,12 @@ async function setupContext(counters: { hooks: number; disposed: number; aborted
     },
   } as never);
   const cleanup = setupResult instanceof Promise ? await setupResult : setupResult;
-  return { cleanup, callback: (event: unknown) => hookCallbacks.get("http.request")?.(event), retry: (event: unknown) => hookCallbacks.get("retry")?.(event), emit };
+  return {
+    cleanup,
+    callback: (event: unknown) => hookCallbacks.get("http.request")?.(event),
+    retry: (event: unknown) => hookCallbacks.get("retry")?.(event),
+    emit,
+  };
 }
 
 test("V2 entrypoint wraps before native fetch capture and setup options update that same early wrapper", async () => {
@@ -301,7 +306,7 @@ test("V2 preserves AbortSignal and duplicate setup cleanup disposes one hook/sub
     const counts = { hooks: 0, disposed: 0, aborted: false };
     const first = await setupContext(counts);
     const second = await setupContext(counts);
-    assert.equal(counts.hooks, 2, "one HTTP correlation hook and one retry hook are installed");
+    assert.equal(counts.hooks, 2, "one HTTP request hook and one retry hook are installed");
     const controller = new AbortController();
     const req = hook("abort-session", "primary", new Request(CODEX_GENERATION_URL, {
       method: "POST", signal: controller.signal,
@@ -345,16 +350,15 @@ test("V2 cleanup is isolated per plugin location", async () => {
 
 test("V2 setup awaits delayed hook registration and cleanup awaits idempotent disposal/subscription finish", async () => {
   await isolated(async () => {
-    let resolveRegistration!: (registration: { dispose: () => Promise<void> }) => void;
-    let resolveDisposal!: () => void;
+    const pending = new Map<string, (registration: { dispose: () => Promise<void> }) => void>();
+    const disposeResolvers: Array<() => void> = [];
     let signal: AbortSignal | undefined;
     let subscriptionFinished = false;
     let setupFinished = false;
     const result = Plugin.setup({
       session: {
         hook(name: string) {
-          if (name === "retry") return Promise.resolve({ dispose: async () => {} });
-          return new Promise<{ dispose: () => Promise<void> }>((resolve) => { resolveRegistration = resolve; });
+          return new Promise<{ dispose: () => Promise<void> }>((resolve) => { pending.set(name, resolve); });
         },
       },
       event: {
@@ -372,7 +376,11 @@ test("V2 setup awaits delayed hook registration and cleanup awaits idempotent di
     void result.then(() => { setupFinished = true; });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(setupFinished, false, "setup waits for native hook registration");
-    resolveRegistration({ dispose: () => new Promise<void>((resolve) => { resolveDisposal = resolve; }) });
+    assert.deepEqual([...pending.keys()].sort(), ["http.request", "retry"],
+      "both native hooks are registered before setup resolves");
+    for (const resolve of pending.values()) {
+      resolve({ dispose: () => new Promise<void>((resolveDisposal) => { disposeResolvers.push(resolveDisposal); }) });
+    }
     const cleanup = await result;
     const firstCleanup = cleanup();
     const duplicateCleanup = cleanup();
@@ -380,11 +388,12 @@ test("V2 setup awaits delayed hook registration and cleanup awaits idempotent di
     assert.equal(signal?.aborted, true, "abort is synchronous");
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(subscriptionFinished, true);
+    assert.equal(disposeResolvers.length, 2, "every native registration is disposed");
     let cleanupFinished = false;
     void firstCleanup.then(() => { cleanupFinished = true; });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(cleanupFinished, false, "cleanup waits for asynchronous hook disposal");
-    resolveDisposal();
+    for (const resolveDisposal of disposeResolvers) resolveDisposal();
     await firstCleanup;
     assert.equal(cleanupFinished, true);
   });
@@ -757,4 +766,154 @@ test("V2 synthetic cooldown proof, renewed quota extension, and monotonic remain
     assert.equal(renewedRetry.attempt, 1, "adapter preserves native attempt budget state");
     await api.cleanup();
   }, (ordinal) => ordinal === 1 ? quotaResponse(60) : quotaResponse(120));
+});
+
+const LIVE_RESETS_AT = 1_792_476_274;
+const LIVE_WALL_MS = 1_900_000_000_000; // Well after resets_at, so resets_in_seconds is authoritative.
+
+function liveQuotaBody(resetSeconds: number): string {
+  return JSON.stringify({
+    type: "error",
+    error: {
+      type: "usage_limit_reached",
+      message: "The usage limit has been reached",
+      plan_type: "plus",
+      resets_at: LIVE_RESETS_AT,
+      limit_window_minutes: 300,
+      resets_in_seconds: resetSeconds,
+    },
+    status_code: 429,
+    headers: {
+      "X-Codex-Primary-Reset-At": String(LIVE_RESETS_AT),
+      "X-Codex-Primary-Reset-After-Seconds": String(resetSeconds + 1),
+    },
+  });
+}
+
+function liveRetryEvent(sessionID: string, resetSeconds: number) {
+  return {
+    sessionID,
+    agent: "orchestrator",
+    model: { id: "gpt-6-luna", providerID: "openai", variant: "default" },
+    error: {
+      type: "provider.quota",
+      message: "The usage limit has been reached",
+      response: { body: liveQuotaBody(resetSeconds) },
+    },
+    attempt: 2,
+    decision: { retry: false as boolean },
+  };
+}
+
+test("V2 live-shaped retry payload schedules the native retry without a fetch delegate call", async () => {
+  await isolated(async (calls) => {
+    const clock = { wall: LIVE_WALL_MS, mono: 500 };
+    const api = await setupContext({ hooks: 0, disposed: 0, aborted: false }, {
+      nowMs: () => clock.wall, monotonicMs: () => clock.mono, staggerMs: 0,
+    });
+    const event = liveRetryEvent("ses_test_live_shape", 600);
+    api.retry(event);
+    assert.deepEqual(event.decision, { retry: true, delay: 660_000 }, "reset 600s plus exactly one 60-second grace");
+    assert.equal(calls.length, 0, "the retry payload path never touches the fetch delegate");
+    await api.cleanup();
+  });
+});
+
+test("V2 retry payload honors long reset windows with exactly one grace period", async () => {
+  for (const [resetSeconds, expectedDelay] of [[18_000, 18_060_000], [5_460, 5_520_000]] as const) {
+    await isolated(async (calls) => {
+      const clock = { wall: LIVE_WALL_MS, mono: 50 };
+      const api = await setupContext({ hooks: 0, disposed: 0, aborted: false }, {
+        nowMs: () => clock.wall, monotonicMs: () => clock.mono, staggerMs: 0,
+      });
+      const event = liveRetryEvent(`ses_test_long_${resetSeconds}`, resetSeconds);
+      api.retry(event);
+      assert.deepEqual(event.decision, { retry: true, delay: expectedDelay },
+        `${resetSeconds}s reset plus exactly one 60-second grace`);
+      assert.equal(calls.length, 0, "no provider call is made while scheduling the retry");
+      await api.cleanup();
+    });
+  }
+});
+
+test("V2 retry payload is read without mutating the native error object or response body", async () => {
+  await isolated(async () => {
+    const clock = { wall: LIVE_WALL_MS, mono: 10 };
+    const api = await setupContext({ hooks: 0, disposed: 0, aborted: false }, {
+      nowMs: () => clock.wall, monotonicMs: () => clock.mono, staggerMs: 0,
+    });
+    const event = liveRetryEvent("ses_test_no_mutation", 600);
+    const errorSnapshot = JSON.parse(JSON.stringify(event.error));
+    const bodySnapshot = event.error.response.body;
+    const modelSnapshot = { ...event.model };
+    api.retry(event);
+    assert.deepEqual(event.decision, { retry: true, delay: 660_000 }, "the payload path ran and only the decision changed");
+    assert.deepEqual(event.error, errorSnapshot, "the native error object and its response body string are untouched");
+    assert.equal(event.error.response.body, bodySnapshot, "the raw response body string is byte-identical");
+    assert.deepEqual(event.model, modelSnapshot, "the native model descriptor is untouched");
+    assert.equal(event.attempt, 2, "the native attempt counter is untouched");
+    await api.cleanup();
+  });
+});
+
+test("V2 retry payload negatives never schedule a retry", async () => {
+  await isolated(async () => {
+    const clock = { wall: LIVE_WALL_MS, mono: 20 };
+    const api = await setupContext({ hooks: 0, disposed: 0, aborted: false }, {
+      nowMs: () => clock.wall, monotonicMs: () => clock.mono, staggerMs: 0, maxErrorBodyBytes: 64,
+    });
+    const withBody = (body: string) => {
+      const event = liveRetryEvent("ses_test_negative", 600);
+      event.error.response = { body } as never;
+      return event;
+    };
+    const nonQuotaPayload = JSON.stringify({
+      type: "error", error: { type: "rate_limit_exceeded", message: "slow down" }, status_code: 429,
+    });
+    const non429Payload = JSON.stringify({
+      type: "error", error: { type: "usage_limit_reached", message: "The usage limit has been reached" }, status_code: 500,
+    });
+    const otherProvider = liveRetryEvent("ses_test_negative", 600);
+    otherProvider.model = { id: "gpt-6-luna", providerID: "azure", variant: "default" };
+    const missingResponse = liveRetryEvent("ses_test_negative", 600);
+    delete (missingResponse.error as { response?: unknown }).response;
+    const missingMessage = liveRetryEvent("ses_test_negative", 600);
+    delete (missingMessage.error as { message?: unknown }).message;
+
+    const cases: Array<[string, ReturnType<typeof liveRetryEvent>]> = [
+      ["malformed JSON body", withBody("{not-json")],
+      ["body over maxErrorBodyBytes", withBody(liveQuotaBody(600) + " ".repeat(256))],
+      ["status_code other than 429", withBody(non429Payload)],
+      ["body without usage_limit_reached", withBody(nonQuotaPayload)],
+      ["model providerID other than openai", otherProvider],
+      ["missing error.response", missingResponse],
+      ["missing error.message", missingMessage],
+    ];
+    for (const [label, event] of cases) {
+      api.retry(event);
+      assert.deepEqual(event.decision, { retry: false }, `${label} leaves decision.retry false`);
+    }
+    assert.equal((globalThis as AnyGlobal)[COOLDOWN], undefined, "no negative payload arms the shared cooldown");
+    await api.cleanup();
+  });
+});
+
+test("V2 fetch-path proof takes precedence over a retry payload without error.response", async () => {
+  await isolated(async (calls) => {
+    const clock = { wall: 1_800_000_000_000, mono: 10 };
+    const api = await setupContext({ hooks: 0, disposed: 0, aborted: false }, {
+      nowMs: () => clock.wall, monotonicMs: () => clock.mono, staggerMs: 0,
+    });
+    const request = hook("ses_test_proof_first");
+    api.callback(request);
+    assert.equal((await (globalThis.fetch as typeof fetch)(request.request)).status, 429);
+    const first = retryEvent("ses_test_proof_first");
+    api.retry(first);
+    assert.deepEqual(first.decision, { retry: true, delay: 660_000 });
+    const second = retryEvent("ses_test_proof_first");
+    api.retry(second);
+    assert.deepEqual(second.decision, { retry: false });
+    assert.equal(calls.length, 1, "only the original generation reached the provider delegate");
+    await api.cleanup();
+  }, () => quotaResponse(600));
 });

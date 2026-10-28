@@ -1425,10 +1425,15 @@ export function buildCodexNativeRetryHeaders(
   };
 }
 
-/** Consume an exact, fresh primary-request quota proof in the native retry hook. */
+/**
+ * Consume an exact, fresh primary-request quota proof in the native retry
+ * hook. When no valid proof produces an override, fall back to the native
+ * `retry` event's provider response payload, which is authoritative for the
+ * quota error path that the response hook never observes.
+ */
 export function applyCodexQuotaRetryV2Hook(event: unknown, options: CodexQuotaRetryFetchOptions = {}): boolean {
   if (!event || typeof event !== "object") return false;
-  const retry = event as { sessionID?: unknown; error?: unknown; decision?: unknown };
+  const retry = event as { sessionID?: unknown; model?: unknown; error?: unknown; decision?: unknown };
   const state = v2State();
   if (typeof retry.sessionID !== "string" || !retry.sessionID) return false;
   if (!retry.error || typeof retry.error !== "object" || !retry.decision || typeof retry.decision !== "object") {
@@ -1437,26 +1442,106 @@ export function applyCodexQuotaRetryV2Hook(event: unknown, options: CodexQuotaRe
   }
   const now = resolveMonotonicMs(options);
   cleanupV2State(state, readClock(options.nowMs, Date.now) ?? Date.now(), now ?? Date.now());
-  const error = retry.error as { type?: unknown; message?: unknown; status?: unknown };
+  const error = retry.error as { type?: unknown; message?: unknown; status?: unknown; response?: unknown };
+  const model = retry.model;
   // OpenCode 2.0.32's public retry summaries map QuotaExceeded to
   // provider.quota and RateLimit to provider.rate-limit (verified in the
   // installed binary; these are not the AI error class/tag names).
+  // Retry events for any other provider are never intercepted.
   if ((error.type !== "provider.quota" && error.type !== "provider.rate-limit")
-    || typeof error.message !== "string" || (error.status !== undefined && error.status !== 429)) {
+    || typeof error.message !== "string" || (error.status !== undefined && error.status !== 429)
+    || (model !== undefined && model !== null
+      && (typeof model !== "object" || (model as { providerID?: unknown }).providerID !== "openai"))) {
     removeV2Proof(state, retry.sessionID);
     return false;
   }
-  const proof = state.retryProofs.get(retry.sessionID);
-  if (now === undefined || !proof) return false;
+
+  // First path: a fresh proof minted by the fetch boundary.
+  const proof = now === undefined ? undefined : state.retryProofs.get(retry.sessionID);
+  if (now !== undefined) removeV2Proof(state, retry.sessionID);
+  if (now !== undefined && proof && proof.expiresMonotonicMs > now
+    && !state.ambiguousSessions.has(retry.sessionID) && !state.activeBySession.has(retry.sessionID)) {
+    const cooldown = getActiveSharedCooldown(options);
+    if (cooldown) {
+      const decision = retry.decision as { retry?: unknown; delay?: unknown };
+      const delay = Math.max(0, Math.ceil(cooldown.remainingMs));
+      if (Number.isFinite(delay)) {
+        decision.retry = true;
+        decision.delay = delay;
+        return true;
+      }
+    }
+  }
+
+  // Second path: the exact provider response carried by the native retry
+  // event. It is read only; the error payload is never mutated.
+  const response = error.response;
+  if (!response || typeof response !== "object") return false;
+  const payload = response as { body?: unknown; headers?: unknown; status_code?: unknown };
+  const rawBody = payload.body;
+  let parsedBody: unknown;
+  if (typeof rawBody === "string") {
+    const maxBodyBytes = typeof options.maxErrorBodyBytes === "number" && Number.isFinite(options.maxErrorBodyBytes)
+      ? options.maxErrorBodyBytes
+      : CODEX_ERROR_BODY_MAX_BYTES;
+    if (rawBody.length > maxBodyBytes) return false;
+    try {
+      parsedBody = JSON.parse(rawBody);
+    } catch {
+      return false;
+    }
+  } else if (rawBody && typeof rawBody === "object") {
+    parsedBody = rawBody;
+  } else {
+    return false;
+  }
+
+  const status = payload.status_code ?? error.status ?? 429;
+  if (status !== 429) return false;
+  const parsedHeaders = parsedBody && typeof parsedBody === "object"
+    ? (parsedBody as { headers?: HeaderCollection }).headers
+    : undefined;
+  const input: CodexQuotaResponseInput = {
+    status,
+    headers: (payload.headers as HeaderCollection | undefined) ?? parsedHeaders,
+    body: parsedBody,
+  };
+  if (!classifyCodexQuotaResponse(input)) return false;
+
+  const wallNow = resolveNowMs({ nowMs: options.nowMs });
+  const monoNow = resolveMonotonicMs(options);
+  if (wallNow === undefined || monoNow === undefined) return false;
+
+  const normalized = parseCodexQuotaDeadline(input, {
+    nowMs: wallNow,
+    fallbackMs: options.fallbackMs,
+    fallbackHours: options.fallbackHours,
+  });
+  if (normalized === undefined) return false;
+
+  const sharedDeadline = armSharedCooldown(normalized, options, wallNow, monoNow);
+  if (sharedDeadline === undefined) return false;
+
+  const headerDeadline = sharedDeadline.deadlineMonotonicMs > monoNow
+    ? {
+      ...normalized,
+      // Mirror the fetch path: use the shared monotonic remainder so grace and
+      // stagger are not applied twice.
+      deadlineMs: wallNow + sharedDeadline.deadlineMonotonicMs - monoNow,
+    }
+    : normalized;
+
+  getSharedCancellationState(options).recordQuotaRetry(retry.sessionID, headerDeadline.deadlineMs);
   removeV2Proof(state, retry.sessionID);
-  if (proof.expiresMonotonicMs <= now || state.ambiguousSessions.has(retry.sessionID)
-    || state.activeBySession.has(retry.sessionID)) return false;
-  const cooldown = getActiveSharedCooldown(options);
-  if (!cooldown) return false;
+
+  const activeCooldown = getActiveSharedCooldown(options);
+  if (!activeCooldown) return false;
+  const delay = Math.max(0, Math.ceil(activeCooldown.remainingMs));
+  if (!Number.isFinite(delay)) return false;
   const decision = retry.decision as { retry?: unknown; delay?: unknown };
   decision.retry = true;
-  decision.delay = Math.max(0, Math.ceil(cooldown.remainingMs));
-  return Number.isFinite(decision.delay);
+  decision.delay = delay;
+  return true;
 }
 
 async function adaptCodexQuotaResponse(
@@ -1744,7 +1829,10 @@ type CodexQuotaRetryV2Context = {
   location?: { directory?: string; workspaceID?: string };
   options?: CodexQuotaRetryFetchOptions;
   session?: {
-    hook?: (name: "http.request" | "retry", callback: (event: unknown) => void | Promise<void>) => Promise<{ dispose: () => Promise<void> }>;
+    hook?: (
+      name: "http.request" | "retry",
+      callback: (event: unknown) => void | Promise<void>,
+    ) => Promise<{ dispose: () => Promise<void> }>;
   };
   event?: {
     subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<unknown>;

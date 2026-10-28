@@ -34,8 +34,8 @@
       "bytes": 43768,
       "sha256": "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72",
       "destination_sha256_at_import": "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72",
-      "sandbox_current_sha256": "27fd25d3a5504f3943acf3538a42f41279413e3c887300e0b992e03988939be6",
-      "sandbox_current_bytes": 72173
+      "sandbox_current_sha256": "5e2f96f88e20016cb00b93a4a0ad60352244994c1735c491522ef108ecf41bf0",
+      "sandbox_current_bytes": 75490
     },
     {
       "source": "scripts/test_codex_quota_retry.ts",
@@ -54,8 +54,8 @@
       "bytes": 17612,
       "sha256": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
       "destination_sha256_at_import": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
-      "sandbox_current_sha256": "e7286689ed20194dcfb0cbae8bfdd136c6dc7de365cf2d86de11125dd8696e5c",
-      "sandbox_current_bytes": 29318
+      "sandbox_current_sha256": "ad8ca08cdd2374386c9b882b582b67845cd16e8d713fbf4a31576c48458117b6",
+      "sandbox_current_bytes": 42278
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",
