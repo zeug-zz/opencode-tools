@@ -54,8 +54,8 @@
       "bytes": 17612,
       "sha256": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
       "destination_sha256_at_import": "c5b962f7dbb4c1cf9ba108e098e356d9f6825df05b30f14bc860e4b13252e538",
-      "sandbox_current_sha256": "ad8ca08cdd2374386c9b882b582b67845cd16e8d713fbf4a31576c48458117b6",
-      "sandbox_current_bytes": 42278
+      "sandbox_current_sha256": "5b1fd0d8c02a8c34f4a02b8a98aff586096944a2c01bfc38ee619fd2d82834da",
+      "sandbox_current_bytes": 41216
     },
     {
       "source": "openspec/changes/codex-subscription-native-retry-adapter/.openspec.yaml",

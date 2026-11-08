@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "campaign_id": "example-campaign",
+  "common_dir": "/example/project/.git",
+  "base_ref": "main",
+  "phase": 1,
+  "roles": {
+    "overseer": {
+      "generation": 1,
+      "session_id": null,
+      "directory": null,
+      "branch": null,
+      "agent": null
+    },
+    "A": {
+      "generation": 1,
+      "session_id": null,
+      "directory": null,
+      "branch": null,
+      "agent": null
+    },
+    "B": {
+      "generation": 1,
+      "session_id": null,
+      "directory": null,
+      "branch": null,
+      "agent": null
+    }
+  },
+  "limits": {
+    "scan_interval_seconds": 30,
+    "max_frame_bytes": 262144,
+    "max_new_bytes_per_observation": 1048576,
+    "max_batch_snapshot_bytes": 524288,
+    "max_notice_bytes": 16384,
+    "api_timeout_seconds": 30,
+    "pre_post_retries": 3,
+    "pre_post_backoff_seconds": [
+      1,
+      2,
+      4
+    ]
+  },
+  "baseline": {
+    "A": {
+      "mode": "now",
+      "offset": 0,
+      "prefix_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "B": {
+      "mode": "now",
+      "offset": 0,
+      "prefix_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "connection": {
+    "mode": "managed-local",
+    "expected_url": "http://127.0.0.1:17777"
+  },
+  "capabilities": {
+    "overseer_notices": false,
+    "owner_approved_notices": false,
+    "worker_delivery": false,
+    "worker_steers": false,
+    "goal_resume": false
+  }
+}

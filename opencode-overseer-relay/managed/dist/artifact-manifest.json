@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "hashAlgorithm": "SHA-256",
+  "files": [
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "size": 703,
+      "sha256": "41cc1c6cc4f53702061429a53804e835c0fb7d6b8bae54f7b88c948462eb8e3f"
+    },
+    {
+      "path": "contract.mjs",
+      "size": 21631,
+      "sha256": "b5d4067e0d13b823fbc64c77a06a153f13134081ad5cfd701304421de22f6f82"
+    },
+    {
+      "path": "core.mjs",
+      "size": 19767,
+      "sha256": "c9baa52fc7f8cc2cfada31f54af3f9b283080e39182c361c243bf3bf0ff88bcd"
+    },
+    {
+      "path": "licenses/opencode-MIT.txt",
+      "size": 1065,
+      "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+    },
+    {
+      "path": "provenance.json",
+      "size": 6920,
+      "sha256": "bfa347a9c9198c0c6beff780e5c8055958384a6ad7b2abc879b4d76ecc01c374"
+    },
+    {
+      "path": "relay-managed.mjs",
+      "size": 2348,
+      "sha256": "fae5a325dc9759d45c1c6785a63dfbd372662f4fa497ea6e967492facf12deed"
+    },
+    {
+      "path": "vendor/chunks/contract-1r8wv9wh.js",
+      "size": 4719,
+      "sha256": "032bcc517627ea333a483ac24dea9dcedcf17e954cb5a165e7e74c76bac45ee3"
+    },
+    {
+      "path": "vendor/chunks/contract-6r38tsk5.js",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vendor/chunks/contract-8ye1ye6f.js",
+      "size": 3170,
+      "sha256": "20e2ba0a4762f41d27a83ef1a467e90c71df93f38723bbee33b56fa1b15a7033"
+    },
+    {
+      "path": "vendor/chunks/contract-9rqn6x4v.js",
+      "size": 399,
+      "sha256": "7d87e6da55ff0df298feb4a26f0335a161575d2e19f16f1919d18e85bfab3da8"
+    },
+    {
+      "path": "vendor/chunks/contract-gecjxyvt.js",
+      "size": 4878,
+      "sha256": "0050fd22f63f8da18e148be36b3345d4da442cd86f3ab7166b05bce9dc426f4d"
+    },
+    {
+      "path": "vendor/chunks/contract-mwrzahmf.js",
+      "size": 1070,
+      "sha256": "24a33a802fe3b658dc374e92479dbfb67c996a65cece327eb89d0610f005fd7e"
+    },
+    {
+      "path": "vendor/chunks/contract-nwcpakzx.js",
+      "size": 372,
+      "sha256": "daf15d1e36515dda19895b3de6a3011caae4f1bd0e7265adaf165ed272bdc2a4"
+    },
+    {
+      "path": "vendor/chunks/contract-qav6mfdz.js",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vendor/chunks/contract-sdjh9vmn.js",
+      "size": 7271,
+      "sha256": "b455cba11466057de84ca1ca7a4850c9f2f08c5fe12fc20575923ef564c841a2"
+    },
+    {
+      "path": "vendor/chunks/contract-sxt88q69.js",
+      "size": 323,
+      "sha256": "2b987f5ac05e32be7a7248c76e0a8cf432d49a3505c126c833dee6db85939c7b"
+    },
+    {
+      "path": "vendor/chunks/contract-ve4aws36.js",
+      "size": 3339,
+      "sha256": "a9fb6a060e0ce7955703da6b597442c657ef5bd5eb9b45e24897593af0939e0f"
+    },
+    {
+      "path": "vendor/chunks/contract-vxrn9xjg.js",
+      "size": 66940,
+      "sha256": "9182ff2ecdcff1a3dd4eabdcdd50ccd7659ee777cb2b35b91ece5bd3214da3ac"
+    },
+    {
+      "path": "vendor/chunks/contract-vyas3vgt.js",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vendor/chunks/contract-xby11z3y.js",
+      "size": 645,
+      "sha256": "6e5793273a08d7497e954b15484f2f6b3f26027cc99fa6b83b827fd1240f09be"
+    },
+    {
+      "path": "vendor/chunks/contract-xgnj2w4v.js",
+      "size": 541,
+      "sha256": "3be2e954942219a66964ec2d77a24c738aab904c687c35853d046c3ab738e925"
+    },
+    {
+      "path": "vendor/chunks/contract-xqwq6bgr.js",
+      "size": 2674,
+      "sha256": "85ea81422548a373076e326c61841b974163fb4510e756be0545626d4064cdb7"
+    },
+    {
+      "path": "vendor/package.json",
+      "size": 23,
+      "sha256": "3ca9d4afd21425087cf31893b8f9f63c81b0b8408db5e343ca76e5f8aa26ab9a"
+    },
+    {
+      "path": "vendor/promise/index.js",
+      "size": 3908,
+      "sha256": "5e41860ec97034b9ff86eac9119e22181aebff268ef12326ca730e67ffa86233"
+    },
+    {
+      "path": "vendor/promise/service.js",
+      "size": 5946,
+      "sha256": "a7edbff28fb1d84688cbf80dc9a53cb42947cc9f3d3ded7bc31d749f13a6bb8e"
+    }
+  ]
+}

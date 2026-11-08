@@ -1,0 +1,8 @@
+{
+  "host_version": "2.3",
+  "optional_schema_additions": {
+    "server_info": { "build": { "type": "string" } },
+    "session_info": { "displayName": { "type": "string" } },
+    "prompt_request": { "clientLabel": { "type": "string" } }
+  }
+}

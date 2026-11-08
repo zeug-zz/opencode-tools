@@ -1,0 +1,16 @@
+{
+  "name": "@opencode-overseer-relay/managed-helper",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@opencode/client": "2.2.6"
+  }
+}

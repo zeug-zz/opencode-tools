@@ -1,0 +1,8 @@
+{
+  "extra_required_field": {
+    "name": "newRequiredOption",
+    "schema": { "type": "string" }
+  },
+  "missing_success_status": "204",
+  "missing_route": "/api/session/{sessionID}/command"
+}

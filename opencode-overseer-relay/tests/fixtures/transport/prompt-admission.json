@@ -1,0 +1,20 @@
+{
+  "data": {
+    "id": "msg_fixture_1",
+    "sessionID": "ses_overseer123",
+    "time": {
+      "created": 1762550002000
+    },
+    "type": "user",
+    "delivery": "queue",
+    "payload": {
+      "text": "synthetic notice",
+      "metadata": {
+        "overseerRelay": {
+          "campaign": "campaign-fixture",
+          "batchId": "b-0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    }
+  }
+}

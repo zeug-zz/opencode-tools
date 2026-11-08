@@ -1,0 +1,14 @@
+{
+  "data": {
+    "id": "ses_overseer123",
+    "agent": "build",
+    "location": {
+      "directory": "/workspace"
+    },
+    "subpath": "repo",
+    "time": {
+      "created": 1762550000000,
+      "updated": 1762550001000
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "host_version": "2.2.7",
+  "required_prompt_field": { "name": "newRequiredOption", "schema": { "type": "string" } }
+}

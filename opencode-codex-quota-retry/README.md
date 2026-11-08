@@ -625,12 +625,14 @@ are not rewritten by this PASS.
 
 ## Claude session-limit native retry plugin
 
-`@openchamber/opencode-claude` (provider `claude-code`) returns HTTP 429 with
-`rate_limit_error` / `claude_session_limit` and a published reset (`resets_at`,
-`retry_after`) when the Claude subscription session limit is reached. OpenCode
-2.1.2 caps provider retry-after at 15 minutes and 10 attempts (about 2.5 hours),
-so this plugin uses the native `retry` hook to hold the retry until the published
-reset.
+This plugin targets only OpenCode's native `claude-agent` provider. The verified
+native retry event uses `error.type: provider.unknown` and a message in one of two
+exact forms: `Claude Code subscription limit reached (five hour). Resets at
+<future UTC ISO instant>.` or, when the native event omits its reset class,
+`Claude Code subscription limit reached. Resets at <future UTC ISO instant>.`.
+Classification does not depend on `error.type` and does not inspect a response or
+proxy payload. Missing, malformed, stale, oversized, or unrepresentable resets are
+left to native policy; no reset or fallback deadline is synthesized.
 
 Sources: `src/lib/claude-session-limit-retry.ts` (classification, deadline, cap,
 cooldown) and the V2 entrypoint `src/plugins/claude-session-limit-retry.ts`. The
@@ -639,42 +641,22 @@ its own global symbol, `opencode.claude-session-limit-retry.cooldown`.
 
 Behavior:
 
-- Classification (all required, shared): model `providerID` is `claude-code`; the
-  body (from `error.response.body`, a JSON string of at most 64 KiB, or an object)
-  has `error.code` `claude_session_limit`. Then one class applies:
-  - Class A (429 gate): `error.type` is `provider.rate-limit` or `provider.quota`;
-    status is 429 from `error.response.status_code`, falling back to
-    `error.status`; body `error.type` is `rate_limit_error`.
-  - Class B (mid-stream): `error.type` is `provider.internal`; status is not 429
-    (HTTP 200 SSE error chunk); body `error.type` is `error`. Intercepted only when
-    a reset time can be parsed from the message text. Otherwise native backoff
-    applies.
-- Deadline: the latest valid future candidate among body `resets_at`, header
-  `x-claude-rate-limit-reset`, body `retry_after`, header `retry-after` (headers
-  are matched case-insensitively), and reset times in the message text (body
-  `error.message` and the event-level message), plus one 60 s grace. Text forms:
-  an ISO instant; `resets H[:MM]am|pm (IANA zone)`, taken as the next occurrence
-  and DST-aware; and a dated form, `resets Mon D[, YYYY] H[:MM]am|pm (zone)`. Text
-  beats a bare `retry_after`: a 429 with `retry_after: 600` whose text names a
-  reset about 2 h away waits for that reset. Malformed, stale, invalid-zone,
-  non-finite, or unrepresentable candidates are ignored. With no valid candidate
-  the plugin does not intercept; there is no synthetic fallback.
-- Cap: a graced wait longer than `maxWaitMs` (default 6 h) is not intercepted.
-  A weekly reset is left to native policy, so the error surfaces after native
-  retries are exhausted.
-- Cooldown: a process-global monotonic deadline is shared across sessions. The
-  later deadline wins, the grace is applied once, and each delay adds a stagger
-  of 0-250 ms.
+- Classification: `model.providerID` must be `claude-agent`, and the complete
+  `error.message` must match one of the native signatures above. Scanned text is
+  bounded to 64 KiB; arbitrary embedded JSON is not decoded.
+- Deadline: the matched message's valid future UTC ISO instant plus one 60-second
+  grace. No valid reset means no promotion; weekly/beyond-cap resets remain under
+  native policy.
+- Cap: the graced wait must fit `maxWaitMs` (default six hours), clamped to
+  `2_147_483_647` ms. Only positive finite configured values override the default.
+- Cooldown: a Claude-only process-global monotonic deadline is shared across
+  sessions. The latest deadline wins, expired cooldowns are ignored, remaining
+  monotonic time is rounded up, grace is applied once, and each delay adds a
+  stagger of 0-250 ms.
 - Read-only: only `decision.retry` and `decision.delay` are set. `error`, the
   response, headers, and body are never mutated. There is no fetch wrapper, no
   `http.request` or `http.response` hook, no response rewriting, no retry loop,
   and no `session.abort`; interruption stays native.
-- Mid-stream (Class B) events are intercepted only when the message text yields a
-  reset time. This is the 2026-10-22 field failure
-  (`openspec/changes/claude-session-limit-native-retry/reports/field-failure-20261022.md`):
-  the v1 plugin skipped that event, so native backoff ran. A Class B event without a
-  parseable text reset is left to native backoff, and its next retry reaches the
-  proxy's 429 gate.
 - Only the `retry` hook is registered. Cleanup disposes it idempotently.
 
 Options:
@@ -689,35 +671,35 @@ Options:
 Verification (provider-free; run from `packages/opencode-codex-quota-retry/`):
 
 ```text
-bun test ./scripts/claude_session_limit_retry.test.ts      # 70 tests
-bun scripts/claude_session_limit_stub_gate.ts --self-check
+bun test ./scripts/claude_session_limit_retry.test.ts ./scripts/claude_agent_native_retry_gate.test.ts ./scripts/v2_native_retry_adapter.test.ts
+bun ./scripts/claude_agent_native_retry_gate.ts
 ```
 
-The isolated stub gate needs the installed OpenCode 2.1.2 and talks only to a
-localhost 429 stub. It does not contact a provider. It has three scenarios:
+The native gate requires installed OpenCode 2.2.6. It injects synthetic
+stream-json SDK events through `OPENCODE_CLAUDE_PATH`, uses no provider endpoint
+or inherited provider credentials, and tests seven scenarios: bounded success,
+pending-wait interruption, missing reset, overload, authentication, billing, and
+weekly reset. It observes built-in `retry: false`, the product override, and the
+final consumed decision. The wrong-provider clone is unit-negative coverage, not
+an eighth runtime scenario. Bounds are 90 seconds for success, 30 seconds for
+interruption, 15 seconds per negative case, and 300 seconds overall. Its localhost
+and synthetic-CLI assertions are application-level checks, not OS-level egress
+isolation.
 
-```text
-bun scripts/claude_session_limit_stub_gate.ts                      # default: 429, resets_at 2 h out
-bun scripts/claude_session_limit_stub_gate.ts --scenario=fallback  # 429, retry_after 600, text reset ~2 h out
-bun scripts/claude_session_limit_stub_gate.ts --scenario=midstream # HTTP 200 SSE error chunk, text reset ~4 h out
-```
+The 2026-11-08 native gate passed all seven scenarios. The successful retry
+resumed to scripted success after 62,965 ms; the interruption case held a
+7,259,783 ms retry pending and ended after one model attempt. Content-free summary:
+`openspec/changes/claude-session-limit-native-retry/reports/native-agent-gate-20261108.md`;
+generated evidence:
+`tmp/claude-session-limit-retry/task-6.3/gate-20261108T082945773Z-9f4dbeba/gate-summary.json`.
 
-The 2026-10-22 v2 gate passed all three on 2.1.2, with one stub chat request and
-one hook attempt each. Default set `decision.delay` to 7,260,083 ms (2 h reset,
-60 s grace, stagger), above the native 15-minute cap. Fallback set 7,296,314 ms,
-from the text reset rather than the ~11 min that `retry_after: 600` alone would
-give. Midstream set 14,489,922 ms, from the text reset. The midstream stub framing
-is modelled on field-failure fixture A; the real proxy's exact stream framing is
-unverified. On 2.1.2, `error.response` carried only `body`, with no headers and no
-`status_code`, so the deadline came from the body and text and the status from
-`error.status`. This does not prove a genuinely exhausted subscription; that live
-gate (task 3.4) is optional and separately authorized. See
-`openspec/changes/claude-session-limit-native-retry/reports/stub-gate-20261022-v2.md`
-and, for the v1 default run, `reports/stub-gate-20261022.md`.
-
-Installation: v1 is deployed (task 3.2) and was restarted (task 3.3). The v2
-redeploy (task 5.6) is pending and requires explicit authorization plus an
-OpenCode restart. The global copies are:
+Historical only: the OpenCode 2.1.2 `claude-code` OpenAI-compatible gate and its
+2026-10-22 reports document the deprecated transport, not current support or native
+acceptance. Its legacy self-check intentionally fails against the native-only
+classifier. Previously deployed global copies have not been updated; deployment
+remains a separate, explicitly authorized rollout and is not implied by this
+repository gate. The native gate uses isolated test configuration and requires no
+restart of an existing process. Historical global paths were:
 
 - `~/.config/opencode/plugins/claude-session-limit-retry.ts`
 - `~/.config/opencode/lib/claude-session-limit-retry.ts`

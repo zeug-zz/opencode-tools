@@ -1,0 +1,187 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "OpenCode HTTP API", "version": "0.0.1" },
+  "x-fixture-host-version": "2.2.7",
+  "paths": {
+    "/api/info": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ServerInfo" } } } }
+        }
+      }
+    },
+    "/api/session/{sessionID}": {
+      "get": {
+        "parameters": [{ "name": "sessionID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Session.ID" } }],
+        "responses": {
+          "200": { "content": { "application/json": { "schema": {
+            "type": "object", "properties": { "data": { "$ref": "#/components/schemas/Session.Info" } },
+            "required": ["data"]
+          } } } }
+        }
+      }
+    },
+    "/api/session/{sessionID}/inbox": {
+      "get": {
+        "parameters": [{ "name": "sessionID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Session.ID" } }],
+        "responses": {
+          "200": { "content": { "application/json": { "schema": {
+            "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Session.Inbox.Info" } } },
+            "required": ["data"]
+          } } } }
+        }
+      }
+    },
+    "/api/session/{sessionID}/message": {
+      "get": {
+        "parameters": [
+          { "name": "sessionID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Session.ID" } },
+          { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["user", "assistant", "synthetic"] } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "anyOf": [{ "type": "string" }] } },
+          { "name": "order", "in": "query", "required": false, "schema": { "type": "string", "enum": ["asc", "desc"] } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionMessagesResponse" } } } } }
+      }
+    },
+    "/api/session/{sessionID}/command": {
+      "post": {
+        "parameters": [{ "name": "sessionID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Session.ID" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "text": { "type": "string" },
+              "files": { "type": "array", "items": { "type": "string" } },
+              "agents": { "type": "array", "items": { "type": "string" } },
+              "skills": { "type": "array", "items": { "type": "string" } },
+              "delivery": { "anyOf": [{ "$ref": "#/components/schemas/Session.Inbox.Delivery" }, { "type": "null" }] }
+            },
+            "required": ["name", "text"], "additionalProperties": false
+          } } }
+        },
+        "responses": {
+          "204": { "description": "No Content" },
+          "400": { "description": "Bad Request" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not Found" },
+          "500": { "description": "Internal Server Error" }
+        }
+      }
+    },
+    "/api/session/{sessionID}/prompt": {
+      "post": {
+        "parameters": [{ "name": "sessionID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Session.ID" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "delivery": { "anyOf": [{ "$ref": "#/components/schemas/Session.Inbox.Delivery" }, { "type": "null" }] },
+              "resume": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
+              "metadata": { "type": "object" }
+            },
+            "required": ["text"], "additionalProperties": false
+          } } }
+        },
+        "responses": { "200": { "content": { "application/json": { "schema": {
+          "type": "object", "properties": { "data": { "$ref": "#/components/schemas/Session.Inbox.User" } },
+          "required": ["data"]
+        } } } } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ServerInfo": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string" },
+          "pid": { "type": "integer", "minimum": 0 },
+          "urls": { "type": "array", "items": { "type": "string" } },
+          "paths": { "$ref": "#/components/schemas/ServerPaths" }
+        },
+        "required": ["version", "pid", "urls", "paths"]
+      },
+      "ServerPaths": { "type": "object", "properties": { "tmp": { "type": "string" } }, "required": ["tmp"] },
+      "Session.ID": { "type": "string", "pattern": "^ses" },
+      "Project.ID": { "type": "string" },
+      "Money.USD": { "type": "number" },
+      "Session.Info": {
+        "type": "object",
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Session.ID" },
+          "projectID": { "$ref": "#/components/schemas/Project.ID" },
+          "cost": { "$ref": "#/components/schemas/Money.USD" },
+          "tokens": { "$ref": "#/components/schemas/TokenUsage.Info" },
+          "agent": { "type": "string" },
+          "location": { "$ref": "#/components/schemas/Location.PublicRef" },
+          "time": { "$ref": "#/components/schemas/Session.Time" },
+          "subpath": { "type": "string" }
+        },
+        "required": ["id", "projectID", "cost", "tokens", "time", "location"]
+      },
+      "Location.PublicRef": { "type": "object", "properties": { "directory": { "type": "string" } }, "required": ["directory"] },
+      "Session.Time": {
+        "type": "object", "properties": { "created": { "type": "number" }, "updated": { "type": "number" }, "archived": { "type": "number" } },
+        "required": ["created", "updated"]
+      },
+      "TokenUsage.Info": {
+        "type": "object",
+        "properties": {
+          "input": { "type": "number" }, "output": { "type": "number" }, "reasoning": { "type": "number" },
+          "cache": { "$ref": "#/components/schemas/TokenUsage.Cache" }
+        },
+        "required": ["input", "output", "reasoning", "cache"]
+      },
+      "TokenUsage.Cache": { "type": "object", "properties": { "read": { "type": "number" }, "write": { "type": "number" } }, "required": ["read", "write"] },
+      "Session.Inbox.Delivery": { "type": "string", "enum": ["steer", "queue"] },
+      "Session.Inbox.Info": { "anyOf": [
+        { "$ref": "#/components/schemas/Session.Inbox.User" },
+        { "$ref": "#/components/schemas/Session.Inbox.Synthetic" },
+        { "$ref": "#/components/schemas/Session.Inbox.Compaction" },
+        { "$ref": "#/components/schemas/Session.Inbox.Move" }
+      ] },
+      "Session.Inbox.User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" }, "sessionID": { "$ref": "#/components/schemas/Session.ID" },
+          "time": { "type": "object", "properties": { "created": { "type": "number" } }, "required": ["created"] },
+          "type": { "type": "string", "enum": ["user"] }, "payload": { "$ref": "#/components/schemas/Session.Inbox.UserPayload" },
+          "delivery": { "$ref": "#/components/schemas/Session.Inbox.Delivery" }
+        },
+        "required": ["id", "sessionID", "time", "type", "payload", "delivery"]
+      },
+      "Session.Inbox.UserPayload": { "type": "object", "properties": { "text": { "type": "string" }, "metadata": { "type": "object" } }, "required": ["text"] },
+      "Session.Inbox.Synthetic": { "type": "object", "properties": { "type": { "type": "string", "enum": ["synthetic"] } } },
+      "Session.Inbox.Compaction": { "type": "object", "properties": { "type": { "type": "string", "enum": ["compaction"] } } },
+      "Session.Inbox.Move": { "type": "object", "properties": { "type": { "type": "string", "enum": ["move"] } } },
+      "Session.Message.User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" }, "time": { "type": "object", "properties": { "created": { "type": "number" } }, "required": ["created"] },
+          "text": { "type": "string" }, "type": { "type": "string", "enum": ["user"] }, "metadata": { "type": "object" }
+        },
+        "required": ["id", "time", "text", "type"]
+      },
+      "SessionMessagesResponse": {
+        "type": "object",
+        "properties": {
+          "data": { "type": "array", "items": { "anyOf": [
+            { "$ref": "#/components/schemas/Session.Message.User" },
+            { "type": "object", "properties": { "type": { "type": "string", "enum": ["assistant"] } } }
+          ] } },
+          "cursor": { "type": "object", "properties": {
+            "previous": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+            "next": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+          } }
+        },
+        "required": ["data", "cursor"]
+      }
+    }
+  }
+}
