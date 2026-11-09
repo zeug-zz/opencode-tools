@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = resolve(PACKAGE_ROOT, "../..");
-const NEQ_ROOT = "/Users/zeug/Projects/NeverEndingQuest";
+const NEQ_ROOT = "/Users/user/Projects/NeverEndingQuest";
 const MANIFEST = join(PACKAGE_ROOT, "provenance/migration-manifest.json");
 const GLOBAL_HASHES = new Map([
-  ["/Users/zeug/.config/opencode/plugins/codex-quota-retry.ts", "86feaa78230efcf2976e87ff8b36385a8d91c8f455e8cff9be6008a61197d822"],
-  ["/Users/zeug/.config/opencode/lib/codex-quota-retry.ts", "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72"],
+  ["/Users/user/.config/opencode/plugins/codex-quota-retry.ts", "86feaa78230efcf2976e87ff8b36385a8d91c8f455e8cff9be6008a61197d822"],
+  ["/Users/user/.config/opencode/lib/codex-quota-retry.ts", "4e50dfd87587bd9edd56712760fb7f935d8171f82910c1428dd07795e7c58e72"],
 ]);
 const EXPECTED_SOURCES = [
   ".opencode/plugins/codex-quota-retry.ts",

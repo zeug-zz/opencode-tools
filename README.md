@@ -12,3 +12,12 @@ Each package has its own README with test procedures. Tests are provider-free. D
 ## Provenance
 
 History was split from a private sandbox repository. Original-license attribution and provenance records are kept inside each package (see `provenance/`).
+
+## License
+
+MIT (see [`LICENSE`](LICENSE)), except for third-party material that keeps its own terms:
+`opencode-codex-quota-retry/provenance/` preserves the original
+[Fair Source License 1.0](opencode-codex-quota-retry/provenance/LICENSE.from-neverendingquest.txt)
+(MoonlightByte) for code migrated from NeverEndingQuest, and `opencode-overseer-relay/managed/licenses/`
+carries the OpenCode MIT notice. Absolute paths in historical provenance and retirement
+scripts were redacted to `/Users/user`.

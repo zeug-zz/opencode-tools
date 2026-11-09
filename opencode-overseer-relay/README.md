@@ -158,7 +158,7 @@ node --test packages/opencode-overseer-relay/managed/tests/*.test.mjs
 The fixed 18-file SDK input inventory and hashes in `managed/sdk-inventory.json`
 plus `managed/bun.lock` make staging reproducible. The lock's 2.2.6 version is
 not a host-version requirement. The historical Bun 1.3.13 single-file build
-failed while traversing `/Users/zeug`; it was replaced by the bounded Node
+failed while traversing `/Users/user`; it was replaced by the bounded Node
 source stager, not by a wider HOME permission or another Bun attempt. The
 stager reads only explicit project-local SDK source files.
 

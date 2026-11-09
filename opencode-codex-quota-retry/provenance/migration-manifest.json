@@ -4,7 +4,7 @@
   "captured_date": "2026-10-15",
   "ownership": {
     "canonical_development_root": "packages/opencode-codex-quota-retry",
-    "source_repository": "/Users/zeug/Projects/NeverEndingQuest",
+    "source_repository": "/Users/user/Projects/NeverEndingQuest",
     "source_files_retained_until_task": "2.2",
     "retry_or_cancellation_behavior_changed": false,
     "license_terms_changed": false,
@@ -137,7 +137,7 @@
   },
   "evidence_tree": {
     "operation": "single same-filesystem atomic directory rename; no file copy, archive, pruning, symlink following, or rewrite",
-    "source_absolute_path": "/Users/zeug/Projects/NeverEndingQuest/tmp/codex-quota-retry",
+    "source_absolute_path": "/Users/user/Projects/NeverEndingQuest/tmp/codex-quota-retry",
     "destination_relative_path": "tmp/codex-quota-retry/imported-neq-20261015",
     "source_path_after_move": "absent",
     "source_root_identity_before": {

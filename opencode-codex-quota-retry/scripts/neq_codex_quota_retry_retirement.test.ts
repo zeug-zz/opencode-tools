@@ -9,8 +9,8 @@ const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX = resolve(PACKAGE_ROOT, "../..");
 const MANIFEST = join(PACKAGE_ROOT, "provenance/migration-manifest.json");
 const GLOBAL_PATHS = [
-  "/Users/zeug/.config/opencode/plugins/codex-quota-retry.ts",
-  "/Users/zeug/.config/opencode/lib/codex-quota-retry.ts",
+  "/Users/user/.config/opencode/plugins/codex-quota-retry.ts",
+  "/Users/user/.config/opencode/lib/codex-quota-retry.ts",
 ];
 const FROZEN_GLOBAL_SNAPSHOTS = [
   join(PACKAGE_ROOT, "provenance/original/implementation/.opencode/plugins/codex-quota-retry.ts"),
