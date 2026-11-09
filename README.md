@@ -15,9 +15,8 @@ History was split from a private sandbox repository. Original-license attributio
 
 ## License
 
-MIT (see [`LICENSE`](LICENSE)), except for third-party material that keeps its own terms:
-`opencode-codex-quota-retry/provenance/` preserves the original
-[Fair Source License 1.0](opencode-codex-quota-retry/provenance/LICENSE.from-neverendingquest.txt)
-(MoonlightByte) for code migrated from NeverEndingQuest, and `opencode-overseer-relay/managed/licenses/`
-carries the OpenCode MIT notice. Absolute paths in historical provenance and retirement
-scripts were redacted to `/Users/user`.
+MIT (see [`LICENSE`](LICENSE)). The Codex plugin was first developed inside an unrelated
+workspace (NeverEndingQuest); that workspace's licence is kept only as a historical provenance
+record in `opencode-codex-quota-retry/provenance/` and does not apply to this code.
+`opencode-overseer-relay/managed/licenses/` carries the bundled OpenCode MIT notice.
+Absolute paths in historical provenance and retirement scripts were redacted to `/Users/user`.
