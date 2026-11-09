@@ -128,13 +128,6 @@
       "sandbox_current_bytes": 9960
     }
   ],
-  "license_provenance": {
-    "source": "LICENSE",
-    "destination": "packages/opencode-codex-quota-retry/provenance/LICENSE.from-neverendingquest.txt",
-    "bytes": 1499,
-    "sha256": "00d72d776afb416051bcc1a10ff2f0999f8ec2e960c739451f489a9e6dee6f21",
-    "attribution": "NeverEndingQuest source LICENSE copied verbatim; original attribution and terms preserved"
-  },
   "evidence_tree": {
     "operation": "single same-filesystem atomic directory rename; no file copy, archive, pruning, symlink following, or rewrite",
     "source_absolute_path": "/Users/user/Projects/NeverEndingQuest/tmp/codex-quota-retry",
