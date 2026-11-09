@@ -1,0 +1,6 @@
+.DS_Store
+.agora/
+**/__pycache__/
+*.py[cod]
+*.ses
+/tmp/
