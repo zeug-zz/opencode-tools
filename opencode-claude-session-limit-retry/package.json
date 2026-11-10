@@ -1,0 +1,8 @@
+{
+  "name": "opencode-claude-session-limit-retry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./scripts/claude_session_limit_retry.test.ts ./scripts/claude_agent_native_retry_gate.test.ts"
+  }
+}

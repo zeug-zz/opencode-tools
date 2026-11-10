@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { applyClaudeSessionLimitRetryHook, resetClaudeSessionLimitCooldown } from "../src/lib/claude-session-limit-retry.ts";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const REPO_ROOT = resolve(PACKAGE_ROOT, "../..");
+const REPO_ROOT = resolve(PACKAGE_ROOT, "..");
 const PRODUCT_PLUGIN = join(PACKAGE_ROOT, "src", "plugins", "claude-session-limit-retry.ts");
 const EXPECTED_VERSION = "opencode v2.1.2";
 const PROVIDER_ID = "claude-code";

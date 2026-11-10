@@ -87,6 +87,15 @@ test("native rejected reset without rateLimitType uses the verified no-parenthet
   assert.deepEqual(missingNormalizedType.decision, { retry: true, delay: 2 * HOUR + GRACE });
 });
 
+test("native localized session-limit message uses its explicit ISO reset", () => {
+  const message = "You've hit your session limit · resets 2:20pm (Pacific/Auckland) Resets at 2026-11-10T01:20:00.000Z.";
+  const nowMs = Date.parse("2026-11-10T01:02:12.029Z");
+  const event = nativeEvent(message);
+  assert.equal(applyClaudeSessionLimitRetryHook(event, { ...OPTIONS, nowMs }), true);
+  assert.deepEqual(event.decision, { retry: true, delay: 1_127_971 });
+  assertDeclined(nativeEvent(message.replace(" Resets at 2026-11-10T01:20:00.000Z.", "")), { ...OPTIONS, nowMs });
+});
+
 test("native assistant.error normalization without a reset is not assigned a fallback", () => {
   const event = nativeEvent(`${NATIVE_PREFIX}.`, { includeType: true, type: "provider.unknown" });
   assertDeclined(event);

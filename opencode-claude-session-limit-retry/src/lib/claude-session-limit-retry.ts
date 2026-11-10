@@ -16,6 +16,7 @@ export const CLAUDE_SESSION_LIMIT_TEXT_MAX_BYTES = 64 * 1024;
 const MAX_DATE_MS = 8.64e15;
 const NATIVE_FIVE_HOUR_RESET_MESSAGE = /^Claude Code subscription limit reached \(five hour\)\. Resets at ((?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\.$/;
 const NATIVE_UNTYPED_RESET_MESSAGE = /^Claude Code subscription limit reached\. Resets at ((?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\.$/;
+const NATIVE_SESSION_RESET_MESSAGE = /^You've hit your session limit · resets [^\r\n]+ Resets at ((?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\.$/;
 const NATIVE_ISO_INSTANT = /^((?:\d{4}|[+-]\d{6})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z)$/;
 
 type NumberSource = number | (() => number);
@@ -95,7 +96,8 @@ export function parseClaudeSessionLimitNativeDeadline(message: unknown, nowMs: n
   if (!Number.isFinite(nowMs)) return undefined;
   const text = boundedNativeText(message);
   if (!text) return undefined;
-  const match = NATIVE_FIVE_HOUR_RESET_MESSAGE.exec(text) ?? NATIVE_UNTYPED_RESET_MESSAGE.exec(text);
+  const match = NATIVE_FIVE_HOUR_RESET_MESSAGE.exec(text) ?? NATIVE_UNTYPED_RESET_MESSAGE.exec(text)
+    ?? NATIVE_SESSION_RESET_MESSAGE.exec(text);
   if (!match || match[0] !== text) return undefined;
 
   const deadline = parseNativeIsoInstant(match[1]);
